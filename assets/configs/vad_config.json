@@ -1,0 +1,17 @@
+{
+  "model": "silero_vad.onnx",
+  "sample_rate": 16000,
+  "frame_size_ms": 30,
+  "min_speech_duration_ms": 250,
+  "min_silence_duration_ms": 600,
+  "speech_pad_ms": 30,
+  "max_speech_duration_s": 30.0,
+  "threshold": 0.5,
+  "num_threads": 2,
+  "provider": "cpu",
+  "notes": {
+    "frame_size_ms": "30ms frames = 480 samples at 16kHz (ARCHITECTURE.md §2.1)",
+    "min_silence_duration_ms": "600ms silence = utterance boundary (ARCHITECTURE.md §2.1)",
+    "threshold": "0.5 — tune for disaster conditions (panic speech has longer pauses)"
+  }
+}
