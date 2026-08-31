@@ -1,0 +1,48 @@
+name: itantra
+description: >-
+  iTantra (ई-तंत्र) — Indian multilingual offline TTS/STT transceiver for
+  low-bitrate ad-hoc links. SIH 2024 problem statement 26173 (ISRO).
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── ML Engines ──────────────────────────────────────────────────
+  # sherpa-onnx: fully offline STT (AI4Bharat IndicConformer INT8 ONNX)
+  # and TTS via next-gen Kaldi. Models downloaded at first launch.
+  sherpa_onnx: ^1.13.6
+
+  # Platform TTS fallback for Indic languages without ONNX VITS models.
+  # See ml/tts_engine.dart for the sherpa-onnx TTS swap-in point.
+  flutter_tts: ^4.0.3
+
+  # ── State + Persistence ─────────────────────────────────────────
+  provider: ^6.1.2
+  shared_preferences: ^2.2.3
+
+  # ── Location ────────────────────────────────────────────────────
+  geolocator: ^12.0.0
+
+  # ── Audio Recording (for mic → PCM → STT pipeline) ─────────────
+  record: ^5.1.0
+  path_provider: ^2.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Uncomment once models are fetched (scripts/fetch_models.py) so they ship
+  # inside the APK — docs/SETUP_AND_BUILD.md §3:
+  # assets:
+  #   - assets/models/vad/
+  #   - assets/models/stt/
+  #   - assets/models/tts/
