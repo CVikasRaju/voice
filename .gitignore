@@ -1,0 +1,66 @@
+# iTantra — .gitignore
+
+# Dependencies
+node_modules/
+.dart_tool/
+.packages
+pubspec.lock
+
+# Build outputs
+build/
+dist/
+*.apk
+*.aab
+*.ipa
+
+# Flutter
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+
+# Android
+android/.gradle/
+android/app/build/
+android/local.properties
+android/key.properties
+*.jks
+*.keystore
+
+# iOS (if added later)
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (large — download via scripts/fetch_models.py)
+assets/models/stt/*/
+!assets/models/stt/or/
+assets/models/vad/*.onnx
+assets/models/tts/*.onnx
+!assets/models/tts/README.md
+
+# Archives
+*.tar.gz
+*.zip
