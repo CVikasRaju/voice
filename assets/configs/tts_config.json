@@ -1,0 +1,28 @@
+{
+  "engine": "platform",
+  "fallback_reason": "AI4Bharat Indic-TTS uses FastPitch + HiFi-GAN (PyTorch), not VITS. No pre-converted ONNX models available for Indic TTS in sherpa-onnx ecosystem.",
+  "platform_settings": {
+    "speech_rate": 0.9,
+    "volume": 1.0,
+    "pitch": 1.0,
+    "emergency_speech_rate": 1.1,
+    "emergency_volume": 1.0
+  },
+  "swap_in_path": {
+    "description": "To use sherpa-onnx TTS instead of platform TTS:",
+    "steps": [
+      "1. Convert AI4Bharat Indic-TTS (FastPitch + HiFi-GAN) to ONNX",
+      "2. Use sherpa-onnx OfflineTts API with VITS config",
+      "3. Alternative: Meta MMS-TTS (already has ONNX exports for Indic)"
+    ],
+    "references": [
+      "https://github.com/AI4Bharat/Indic-TTS",
+      "https://huggingface.co/facebook/mms-tts-hin",
+      "https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html"
+    ]
+  },
+  "notes": {
+    "platform_tts_quality": "Acceptable for demo — Android ships Indic language TTS voices in most OEM builds",
+    "production_target": "sherpa-onnx VITS with AI4Bharat or Meta MMS-TTS models"
+  }
+}
