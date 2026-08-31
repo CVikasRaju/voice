@@ -1,0 +1,25 @@
+{
+  "model_type": "nemo_enc_dec_ctc",
+  "runtime": "sherpa-onnx",
+  "sample_rate": 16000,
+  "num_threads": 2,
+  "provider": "cpu",
+  "decoding_method": "greedy_search",
+  "max_active_paths": 1,
+  "languages": {
+    "hi": { "model": "stt/hi/model.int8.onnx", "tokens": "stt/hi/tokens.txt" },
+    "gu": { "model": "stt/gu/model.int8.onnx", "tokens": "stt/gu/tokens.txt" },
+    "mr": { "model": "stt/mr/model.int8.onnx", "tokens": "stt/mr/tokens.txt" },
+    "kn": { "model": "stt/kn/model.int8.onnx", "tokens": "stt/kn/tokens.txt" },
+    "ta": { "model": "stt/ta/model.int8.onnx", "tokens": "stt/ta/tokens.txt" },
+    "te": { "model": "stt/te/model.int8.onnx", "tokens": "stt/te/tokens.txt" },
+    "ml": { "model": "stt/ml/model.int8.onnx", "tokens": "stt/ml/tokens.txt" },
+    "bn": { "model": "stt/bn/model.int8.onnx", "tokens": "stt/bn/tokens.txt" },
+    "en": { "model": "stt/en/model.int8.onnx", "tokens": "stt/en/tokens.txt" }
+  },
+  "notes": {
+    "model_type": "AI4Bharat IndicConformer (NeMo CTC), INT8 quantized",
+    "source": "https://huggingface.co/parismitaglobalsolutions/indicconformer-sherpa-onnx",
+    "or_missing": "Odia model not available on HuggingFace — needs manual conversion from AI4Bharat checkpoint"
+  }
+}
