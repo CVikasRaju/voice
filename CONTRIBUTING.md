@@ -18,9 +18,8 @@ cd iTantra
 # Install Android Studio Hedgehog+
 # Install Python 3.10+ for scripts
 
-cd mobile
-flutter create . --project-name itantra --org in.sih.itantra --platforms android
 flutter pub get
+flutter run
 ```
 
 ### 3. Build Order
@@ -48,8 +47,7 @@ Before submitting a PR:
 
 ```bash
 # Run Dart analyzer
-cd mobile
-dart analyze
+flutter analyze
 
 # Run unit tests
 flutter test

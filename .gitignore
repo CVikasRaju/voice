@@ -1,66 +1,80 @@
+# ──────────────────────────────────────────────────────
 # iTantra — .gitignore
+# ──────────────────────────────────────────────────────
 
-# Dependencies
-node_modules/
+# ── Dependencies ─────────────────────────────────────
 .dart_tool/
 .packages
 pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
 
-# Build outputs
+# ── Build outputs ────────────────────────────────────
 build/
 dist/
 *.apk
 *.aab
 *.ipa
 
-# Flutter
-.flutter-plugins
-.flutter-plugins-dependencies
-*.iml
-
-# Android
+# ── Android ──────────────────────────────────────────
 android/.gradle/
+android/.kotlin/
 android/app/build/
 android/local.properties
 android/key.properties
 *.jks
 *.keystore
+**/*.keystore
+**/*.jks
 
-# iOS (if added later)
+# ── iOS (if added later) ────────────────────────────
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework
 ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
 
-# IDE
+# ── IDE ──────────────────────────────────────────────
 .idea/
 .vscode/
+*.iml
 *.swp
 *.swo
 *~
 
-# Environment
+# ── Environment / Secrets ────────────────────────────
 .env
 .env.local
 .env.*.local
+*.pem
+*.key
 
-# Python
+# ── Python ───────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.venv/
+venv/
 
-# OS
+# ── OS ───────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+desktop.ini
+ehthumbs.db
 
-# Model files (large — download via scripts/fetch_models.py)
-assets/models/stt/*/
-!assets/models/stt/or/
+# ── Node (if ever used for tooling) ─────────────────
+node_modules/
+package-lock.json
+
+# ── ML Model files (large — download via scripts/) ──
+# Models are downloaded on first launch; do NOT commit.
+assets/models/stt/
 assets/models/vad/*.onnx
 assets/models/tts/*.onnx
-!assets/models/tts/README.md
 
-# Archives
+# ── Archives ─────────────────────────────────────────
 *.tar.gz
 *.zip
+*.7z

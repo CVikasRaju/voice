@@ -82,33 +82,16 @@ All 10 languages use AI4Bharat IndicConformer INT8 ONNX models via sherpa-onnx f
 ### Run in 3 commands
 
 ```bash
-cd mobile
-flutter create . --project-name itantra --org in.sih.itantra --platforms android
 flutter pub get
 flutter run
 ```
 
-### Add Android permissions
+### Android Permissions
 
-After `flutter create`, edit `android/app/src/main/AndroidManifest.xml` and merge under `<manifest>`:
-
-```xml
-<uses-permission android:name="android.permission.RECORD_AUDIO" />
-<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.BLUETOOTH" />
-<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-<uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-    android:usesPermissionFlags="neverForLocation" />
-```
-
-Also set `minSdkVersion 24` in `android/app/build.gradle`:
-```groovy
-defaultConfig {
-    minSdk = 24
-}
-```
+Permissions are already configured in `android/app/src/main/AndroidManifest.xml`:
+- `RECORD_AUDIO` — microphone access for STT
+- `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` — GPS stamping
+- `INTERNET` — model downloads
 
 ### Build release APK
 
@@ -342,33 +325,31 @@ iTantra/
 │   ├── MODEL_LICENSES.md              #   Open-source compliance & attribution
 │   └── TESTING.md                     #   Unit, integration, and field-test plan
 │
-├── mobile/                            # Flutter Android application
-│   ├── pubspec.yaml                   #   Dependencies (sherpa-onnx, flutter_tts, etc.)
-│   ├── analysis_options.yaml          #   Strict Dart lint rules
-│   ├── lib/
-│   │   ├── main.dart                  #   App entry + MultiProvider setup
-│   │   ├── core/
-│   │   │   ├── theme.dart             #   Premium dark ink-and-saffron theme
-│   │   │   └── permissions.dart       #   Runtime mic/location/BT permissions
-│   │   ├── ml/
-│   │   │   ├── ibfs.dart              #   iBFS-v1 codec + distress detection
-│   │   │   ├── languages.dart         #   10 languages + wire IDs + model paths
-│   │   │   ├── stt_engine.dart        #   sherpa-onnx + AI4Bharat IndicConformer
-│   │   │   └── tts_engine.dart        #   Platform TTS + sherpa-onnx swap-in
-│   │   ├── net/
-│   │   │   ├── transport.dart         #   Transport interface + loopback
-│   │   │   └── store_forward.dart     #   Store-and-forward queue
-│   │   ├── state/
-│   │   │   ├── transceiver_controller.dart  # PTT state machine (core)
-│   │   │   └── battery_monitor.dart  #   Battery/thermal awareness
-│   │   └── ui/
-│   │       ├── home_screen.dart       #   Main screen + typed fallback + log
-│   │       └── widgets/
-│   │           ├── ptt_button.dart    #   Hold-to-talk with pulse animation
-│   │           ├── pipeline_strip.dart#   Live pipeline visualization
-│   │           └── alarm_overlay.dart #   Non-dismissible emergency overlay
-│   └── test/
-│       └── ibfs_test.dart             #   28 unit tests (codec, CRC, distress)
+├── lib/                               # Flutter app source code
+│   ├── main.dart                      #   App entry + MultiProvider setup
+│   ├── core/
+│   │   ├── theme.dart                 #   Premium dark ink-and-saffron theme
+│   │   └── permissions.dart           #   Runtime mic/location/BT permissions
+│   ├── ml/
+│   │   ├── ibfs.dart                  #   iBFS-v1 codec + distress detection
+│   │   ├── languages.dart             #   10 languages + wire IDs + model paths
+│   │   ├── stt_engine.dart            #   sherpa-onnx + AI4Bharat IndicConformer
+│   │   └── tts_engine.dart            #   Platform TTS + sherpa-onnx swap-in
+│   ├── net/
+│   │   ├── transport.dart             #   Transport interface + loopback
+
+│   │   └── store_forward.dart         #   Store-and-forward queue
+│   ├── state/
+│   │   ├── transceiver_controller.dart  # PTT state machine (core)
+│   │   └── battery_monitor.dart       #   Battery/thermal awareness
+│   └── ui/
+│       ├── home_screen.dart           #   Main screen + typed fallback + log
+│       └── widgets/
+│           ├── ptt_button.dart        #   Hold-to-talk with pulse animation
+│           ├── pipeline_strip.dart    #   Live pipeline visualization
+│           └── alarm_overlay.dart     #   Non-dismissible emergency overlay
+├── test/
+│   └── widget_test.dart               #   Unit tests (theme, languages)
 │
 ├── assets/
 │   ├── models/
