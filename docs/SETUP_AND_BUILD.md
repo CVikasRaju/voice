@@ -1,6 +1,6 @@
 # Setup & Build Guide: iTantra
 
-## 1. Stack Decision (Make This Explicit In Your Submission)
+## 1. Stack Decision
 
 Two viable paths exist — pick one and state why, don't leave it ambiguous:
 
@@ -8,9 +8,9 @@ Two viable paths exist — pick one and state why, don't leave it ambiguous:
 |---|---|---|
 | Dev speed | Slower | Faster |
 | Control over BT/Wi-Fi Direct + audio focus | Direct, fine-grained | Wrapped, less control over edge cases (e.g. OEM-specific audio focus quirks) |
-| Best when | Team has strong Android/Kotlin + some C++ experience, and P2P/latency tuning is your priority (worth more rubric points than dev speed) | Team is short on native Android experience and needs a working demo fast |
+| Best when | Team has strong Android/Kotlin + some C++ experience, and P2P/latency tuning is your priority | Team is short on native Android experience and needs a working demo fast |
 
-**Recommendation for a hackathon:** if unsure, default to native Kotlin — the latency and audio-focus behavior that the rubric weights 40% (accuracy) and 20% (latency) on are exactly the things Flutter's abstraction layer makes harder to control precisely.
+**Recommendation:** if unsure, default to native Kotlin — the latency and audio-focus behavior that quality metrics weight 40% (accuracy) and 20% (latency) on are exactly the things Flutter's abstraction layer makes harder to control precisely.
 
 ## 2. Prerequisites
 - OS: Linux / macOS / Windows+WSL2
@@ -55,7 +55,7 @@ flutter:
 </manifest>
 ```
 
-Note: `ACCESS_FINE_LOCATION` is required by Android for Wi-Fi/BT scanning APIs even though you're not using it for location *display* unless you build the optional GPS-stamping feature — explain this to judges if asked, since "why does a privacy-focused app need location permission" is a fair question.
+Note: `ACCESS_FINE_LOCATION` is required by Android for Wi-Fi/BT scanning APIs even though you're not using it for location *display* unless you build the optional GPS-stamping feature — this is a common question since "why does a privacy-focused app need location permission" is a fair concern.
 
 ## 5. Build Order (Why Sequence Matters)
 
@@ -91,7 +91,7 @@ flutter build apk --release --target-platform android-arm64 --split-per-abi
    - Phone A transcribes locally (visible on-screen).
    - Packet transmits (log the actual measured time, don't estimate).
    - Phone B's TTS plays the message audibly, fully offline.
-6. **Log real numbers** — STT time, transfer time, TTS time, total — from actual device logs, not estimates. These are the numbers you put in your submission, not the target table in README.md (that's a target, not a claim).
+6. **Log real numbers** — STT time, transfer time, TTS time, total — from actual device logs, not estimates. These are the numbers you document, not the target table in README.md (that's a target, not a claim).
 
 ## 8. Testing Beyond the Happy Path
 

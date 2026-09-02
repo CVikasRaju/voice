@@ -1,7 +1,7 @@
 name: itantra
 description: >-
   iTantra (ई-तंत्र) — Indian multilingual offline TTS/STT transceiver for
-  low-bitrate ad-hoc links. SIH 2024 problem statement 26173 (ISRO).
+  low-bitrate ad-hoc links.
 publish_to: 'none'
 version: 0.1.0+1
 

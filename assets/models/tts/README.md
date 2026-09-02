@@ -6,7 +6,7 @@ This directory is empty because AI4Bharat Indic-TTS models use **FastPitch + HiF
 
 - **Platform TTS** is used as the fallback (fully on-device on Android).
 - Android ships with Indic language TTS voices in most OEM builds.
-- Quality is acceptable for the hackathon demo.
+- Quality is acceptable for demo purposes.
 
 ## How to Add ONNX TTS Models
 

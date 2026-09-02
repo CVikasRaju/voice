@@ -7,9 +7,9 @@
 <h4 align="center">Indian Multilingual Neural Transceiver — Offline TTS/STT Radio for Low-Bitrate Links</h4>
 
 <p align="center">
-  <strong>SIH Problem Statement 26173</strong>&nbsp;&nbsp;|&nbsp;&nbsp;
-  <strong>Organization:</strong> ISRO, Department of Space&nbsp;&nbsp;|&nbsp;&nbsp;
-  <strong>Category:</strong> Software / Edge AI
+  <strong>100% Offline</strong>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <strong>10 Indic Languages</strong>&nbsp;&nbsp;|&nbsp;&nbsp;
+  <strong>Edge AI</strong>
 </p>
 
 <p align="center">
@@ -231,7 +231,7 @@ When an emergency packet arrives:
 
 These numbers are stated once here and referenced everywhere else. **Do not restate different figures in other docs.**
 
-| Metric | Target | Rubric Weight |
+| Metric | Target | Weight |
 |---|---|---|
 | Per-language model footprint (STT, INT8) | < 40 MB | Efficiency — 20% |
 | App idle RAM (one language resident) | < 150 MB | Efficiency — 20% |
@@ -321,7 +321,7 @@ iTantra/
 │   ├── NETWORK_PROTOCOL.md            #   iBFS-v1 binary packet spec & mesh routing
 │   ├── SETUP_AND_BUILD.md             #   Dev environment, build, and test procedure
 │   ├── ADDITIONAL_FEATURES.md         #   Differentiators beyond the baseline PS
-│   ├── EVALUATION_MAPPING.md          #   How each feature maps to the SIH rubric
+│   ├── EVALUATION_MAPPING.md          #   Feature-to-quality mapping
 │   ├── MODEL_LICENSES.md              #   Open-source compliance & attribution
 │   └── TESTING.md                     #   Unit, integration, and field-test plan
 │
@@ -388,15 +388,13 @@ All specification documents live in `docs/`. They are the **single source of tru
 | [**NETWORK_PROTOCOL.md**](docs/NETWORK_PROTOCOL.md) | iBFS-v1 binary frame spec, field definitions, language code table, extended payload, reliability |
 | [**SETUP_AND_BUILD.md**](docs/SETUP_AND_BUILD.md) | Dev environment, prerequisites, build order, Android permissions, validation checklist |
 | [**ADDITIONAL_FEATURES.md**](docs/ADDITIONAL_FEATURES.md) | 10 prioritized differentiators beyond the baseline problem statement |
-| [**EVALUATION_MAPPING.md**](docs/EVALUATION_MAPPING.md) | Feature-to-rubric mapping, demo strategy, what judges actually score |
+| [**EVALUATION_MAPPING.md**](docs/EVALUATION_MAPPING.md) | Feature-to-quality mapping, demo strategy |
 | [**MODEL_LICENSES.md**](docs/MODEL_LICENSES.md) | Open-source compliance checklist, attribution, verification status |
 | [**TESTING.md**](docs/TESTING.md) | Unit, integration, and adverse-condition test plans |
 
 ---
 
-## Evaluation Strategy
-
-Judges score against four criteria. Here's how every feature maps:
+## Quality Criteria
 
 | Criterion | Weight | Key Features |
 |---|---|---|
@@ -409,16 +407,6 @@ Judges score against four criteria. Here's how every feature maps:
 
 ---
 
-## What To Show Judges
-
-1. **Two phones, airplane mode** — the offline claim must be *demonstrated*, not asserted
-2. **Real transcription** appearing on screen as you speak (not pre-recorded)
-3. **Distress phrase** → auto-emergency priority, max volume, non-interruptible alarm
-4. **Language mismatch** → Phone A sends Kannada, Phone B shows text only (no crash, no garble)
-5. **Network drop** → store-and-forward queues and auto-delivers on reconnect (if time allows)
-
----
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Key principles:
@@ -426,7 +414,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Key principles:
 - **Follow the build order** in `docs/SETUP_AND_BUILD.md` §5
 - **Protocol changes** must update `NETWORK_PROTOCOL.md` + `ibfs.dart` + tests
 - **Model contributions** must include license verification in `docs/MODEL_LICENSES.md`
-- **Test on real hardware** — the rubric explicitly scores against "low and mid-range" devices
+- **Test on real hardware** — performance is evaluated against "low and mid-range" devices
 
 ---
 
@@ -451,8 +439,4 @@ AI4Bharat model weights are used under the **Creative Commons Attribution 4.0 In
 
 ---
 
-<p align="center">
-  Built for <strong>Smart India Hackathon 2026</strong>&nbsp;&nbsp;|&nbsp;&nbsp;
-  Problem Statement 26173&nbsp;&nbsp;|&nbsp;&nbsp;
-  ISRO, Department of Space
-</p>
+

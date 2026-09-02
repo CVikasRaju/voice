@@ -189,7 +189,7 @@ def main():
 
     print("\n" + "=" * 60)
     print("Benchmark complete.")
-    print("Publish these numbers in your SIH submission (ML_PIPELINE.md §7).")
+    print("Publish these numbers in your documentation (ML_PIPELINE.md §7).")
 
 
 if __name__ == "__main__":

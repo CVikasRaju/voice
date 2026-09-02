@@ -73,4 +73,4 @@ Each Indic script (Devanagari, Kannada, Malayalam, Odia, Bengali, Tamil, Telugu 
 - Peak RAM during inference
 - Cold-load time when switching languages
 
-Publish these numbers in your submission — judges scoring the 40% accuracy weight will want to see methodology, not just a claimed percentage.
+Publish these numbers in your documentation — accuracy evaluation (the 40% quality weight) will want to see methodology, not just a claimed percentage.
