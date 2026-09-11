@@ -8,7 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../ml/ibfs.dart';
 import '../ml/languages.dart';
 import '../ml/stt_engine.dart';
+import '../ml/translation_engine.dart';
 import '../ml/tts_engine.dart';
+import '../ml/tts_model_downloader.dart';
 import '../net/store_forward.dart';
 import '../net/transport.dart';
 
@@ -100,6 +102,7 @@ class TransceiverController extends ChangeNotifier {
   final SttEngine stt;
   final TtsEngine tts;
   final Transport transport;
+  final TranslationEngine translator;
 
   late final StoreForwardQueue storeForward;
 
@@ -107,7 +110,8 @@ class TransceiverController extends ChangeNotifier {
     required this.stt,
     required this.tts,
     required this.transport,
-  }) {
+    TranslationEngine? translator,
+  }) : translator = translator ?? TranslationEngine() {
     storeForward = StoreForwardQueue(transport);
     _listenInbound();
   }
@@ -135,6 +139,8 @@ class TransceiverController extends ChangeNotifier {
   set receiverLang(Lang v) {
     _receiverLang = v;
     notifyListeners();
+    // Prepare the neural voice for the new receiver language.
+    _ensureTtsModels(v);
   }
 
   String _interimText = '';
@@ -172,6 +178,62 @@ class TransceiverController extends ChangeNotifier {
 
   /// Whether the sender language models are ready for offline STT.
   bool get senderModelsReady => stt.isReady && stt.currentLocale == _senderLang.code;
+
+  // ── TTS Model Download State ──────────────────────────────────
+
+  bool _ttsDownloading = false;
+  bool get ttsDownloading => _ttsDownloading;
+
+  double _ttsDownloadProgress = 0.0;
+  double get ttsDownloadProgress => _ttsDownloadProgress;
+
+  String _ttsDownloadStatus = '';
+  String get ttsDownloadStatus => _ttsDownloadStatus;
+
+  /// Whether the receiver language has a neural TTS engine ready.
+  bool get receiverTtsReady => tts.isNeuralReady;
+
+  /// Download + initialize the neural TTS model for the receiver language.
+  Future<bool> downloadReceiverTtsModels() async {
+    return _ensureTtsModels(_receiverLang);
+  }
+
+  Future<bool> _ensureTtsModels(Lang lang) async {
+    // Already loaded?
+    if (tts.isNeuralReady) return true;
+    // No neural model exists for this language (e.g. Odia) — platform TTS.
+    if (!TtsModelDownloader.hasNeuralModel(lang)) return false;
+    if (_ttsDownloading) return false;
+
+    _ttsDownloading = true;
+    _ttsDownloadProgress = 0.0;
+    _ttsDownloadStatus = 'Preparing ${lang.name} voice…';
+    notifyListeners();
+
+    // Download if not present.
+    var available = await TtsModelDownloader.areModelsAvailable(lang);
+    if (!available) {
+      available = await TtsModelDownloader.downloadModels(
+        lang,
+        onProgress: (p) {
+          _ttsDownloadProgress = p;
+          _ttsDownloadStatus =
+              'Downloading ${lang.name} voice… ${(p * 100).toInt()}%';
+          notifyListeners();
+        },
+      );
+    }
+
+    _ttsDownloading = false;
+    if (available) {
+      _ttsDownloadStatus = '${lang.name} voice ready';
+      await tts.initNeural(lang);
+    } else {
+      _ttsDownloadStatus = 'Voice download failed — check connection';
+    }
+    notifyListeners();
+    return available;
+  }
 
   /// Download models for the current sender language.
   Future<void> downloadSenderModels() async {
@@ -231,6 +293,28 @@ class TransceiverController extends ChangeNotifier {
     }
     notifyListeners();
   }
+
+  // ── Mesh Transport ────────────────────────────────────────────
+
+  bool _meshActive = false;
+  bool get meshActive => _meshActive;
+
+  /// Enable the BLE mesh transport (falls back to loopback on failure).
+  Future<bool> enableMesh() async {
+    final t = transport;
+    if (t is! SwitchableTransport) return false;
+    if (_meshActive) return true;
+    final ok = await t.enableMesh();
+    _meshActive = ok;
+    notifyListeners();
+    return ok;
+  }
+
+  /// Number of connected mesh peers (0 in loopback mode).
+  int get meshPeerCount =>
+      transport is SwitchableTransport
+          ? (transport as SwitchableTransport).meshPeerCount
+          : 0;
 
   // ── PTT Controls ───────────────────────────────────────────────
 
@@ -416,21 +500,43 @@ class TransceiverController extends ChangeNotifier {
       return;
     }
 
-    // ── Language mismatch: Option A (ARCHITECTURE.md §2.4) ──
-    // If the sender's language doesn't match our receiver language,
-    // display text only (don't attempt TTS in the wrong language).
-    final int? ttsMs;
-    if (packet.language.iso639 == _receiverLang.iso639) {
-      // Configure TTS for this language and speak.
-      await tts.configure(packet.language.code, speechRate: 0.9);
+    // ── Cross-lingual translation + neural TTS (ARCHITECTURE.md §2.4) ──
+    // If the packet language differs from our receiver language, translate
+    // the text on-device (ML Kit), then speak the translation with the
+    // receiver language's neural voice.
+    final bool sameLang = packet.language.iso639 == _receiverLang.iso639;
+    String displayText = packet.text;
+    String spokenText = packet.text;
+    Lang ttsLang = packet.language;
 
-      final ttsStart = DateTime.now().millisecondsSinceEpoch;
-      await tts.speak(packet.text, emergency: packet.priority == Priority.emergency);
-      ttsMs = DateTime.now().millisecondsSinceEpoch - ttsStart;
+    if (!sameLang) {
+      // Ensure the receiver's voice is available (downloads once, ~114 MB).
+      await _ensureTtsModels(_receiverLang);
+
+      final translated = await translator.translate(
+        packet.text,
+        packet.language,
+        _receiverLang,
+      );
+      if (translated != null) {
+        displayText = '${packet.text} → $translated';
+        spokenText = translated;
+        ttsLang = _receiverLang;
+      }
+      // Translation unavailable: fall back to showing the original text.
     } else {
-      // Language mismatch — text only.
-      ttsMs = null;
+      // Same language: still make sure the neural voice is ready.
+      await _ensureTtsModels(_receiverLang);
     }
+
+    final int? ttsMs;
+    // Speak in the (possibly translated) target language.
+    await tts.configure(ttsLang.code, speechRate: 0.9);
+
+    final ttsStart = DateTime.now().millisecondsSinceEpoch;
+    await tts.speak(spokenText,
+        emergency: packet.priority == Priority.emergency);
+    ttsMs = DateTime.now().millisecondsSinceEpoch - ttsStart;
 
     final e2eMs = DateTime.now().millisecondsSinceEpoch - e2eStart;
 
@@ -438,8 +544,8 @@ class TransceiverController extends ChangeNotifier {
       id: packet.sequenceId,
       timestamp: DateTime.now(),
       isSent: false,
-      text: packet.text,
-      langName: packet.language.name,
+      text: displayText,
+      langName: sameLang ? packet.language.name : '${packet.language.name} → ${_receiverLang.name}',
       priority: packet.priority,
       ttsMs: ttsMs,
       e2eMs: e2eMs,
@@ -522,6 +628,7 @@ class TransceiverController extends ChangeNotifier {
     transport.disconnect();
     stt.dispose();
     tts.dispose();
+    translator.dispose();
     super.dispose();
   }
 }

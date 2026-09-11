@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'ble_transport.dart';
+
 /// P2P link abstraction (ARCHITECTURE.md §2 transport stage).
 ///
 /// A real deployment implements this over Bluetooth RFCOMM / Wi-Fi Direct:
@@ -59,6 +61,96 @@ class LoopbackTransport implements Transport {
   @override
   Future<void> disconnect() async {
     _connected = false;
+    await _controller.close();
+  }
+}
+
+/// Transport adapter exposing [BleMeshTransport] behind the [Transport]
+/// interface used by the transceiver pipeline.
+class BleTransportAdapter implements Transport {
+  final BleMeshTransport _ble;
+
+  BleTransportAdapter(this._ble);
+
+  @override
+  Stream<Uint8List> get incoming => _ble.incoming;
+
+  @override
+  bool get isConnected => _ble.isRunning;
+
+  @override
+  Future<int> send(Uint8List frame) {
+    _ble.resetHops(); // Local origination resets the hop budget.
+    return _ble.send(frame);
+  }
+
+  @override
+  Future<void> disconnect() => _ble.stop();
+}
+
+/// Transport that starts on loopback (works everywhere, even without
+/// Bluetooth) and can be switched to the BLE mesh once radios are up.
+class SwitchableTransport implements Transport {
+  Transport _active;
+  final _controller = StreamController<Uint8List>.broadcast();
+  StreamSubscription<Uint8List>? _sub;  final BleMeshTransport mesh = BleMeshTransport.instance;
+
+  SwitchableTransport() : _active = LoopbackTransport() {
+    _wire();
+  }
+
+  void _wire() {
+    _sub?.cancel();
+    _sub = _active.incoming.listen(
+      (frame) {
+        if (!_controller.isClosed) _controller.add(frame);
+      },
+    );
+  }
+
+  /// Whether the BLE mesh is currently the active link.
+  bool get meshActive => _active is BleTransportAdapter;
+
+  /// Number of connected mesh peers (0 in loopback mode).
+  int get meshPeerCount => mesh.peerCount;
+
+  /// Attempt to start the BLE mesh; on success, all traffic moves from
+  /// loopback to the radio. Returns `true` when mesh mode is active.
+  Future<bool> enableMesh() async {
+    if (meshActive) return true;
+    final started = await mesh.start();
+    if (!started) return false;
+    _active = BleTransportAdapter(mesh);
+    _wire();
+    return true;
+  }
+
+  /// Drop back to loopback.
+  Future<void> disableMesh() async {
+    if (!meshActive) return;
+    await mesh.stop();
+    _active = LoopbackTransport();
+    _wire();
+  }
+
+  @override
+  Future<int> send(Uint8List frame) {
+    if (_active is BleTransportAdapter) _mesh.resetHops();
+    return _active.send(frame);
+  }
+
+  // Convenience accessor.
+  BleMeshTransport get _mesh => mesh;
+
+  @override
+  Stream<Uint8List> get incoming => _controller.stream;
+
+  @override
+  bool get isConnected => _active.isConnected;
+
+  @override
+  Future<void> disconnect() async {
+    await _active.disconnect();
     await _controller.close();
   }
 }

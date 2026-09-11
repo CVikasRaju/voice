@@ -17,6 +17,9 @@ void main() {
 class iTantraApp extends StatelessWidget {
   const iTantraApp({super.key});
 
+  /// App-wide transport: starts on loopback, switchable to the BLE mesh.
+  static final SwitchableTransport transport = SwitchableTransport();
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
@@ -26,7 +29,7 @@ class iTantraApp extends StatelessWidget {
             final controller = TransceiverController(
               stt: SttEngine(),
               tts: TtsEngine(),
-              transport: LoopbackTransport(),
+              transport: transport,
             );
             controller.loadLog();
             return controller;

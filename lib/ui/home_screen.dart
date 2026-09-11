@@ -110,9 +110,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     value: _transceiverOn,
                     onChanged: (v) {
                       setState(() => _transceiverOn = v);
-                      // When toggling on, check if models are ready.
+                      // When toggling on, check if models are ready and
+                      // try to bring up the BLE mesh.
                       if (v && !ctrl.modelsDownloading) {
                         ctrl.predownloadModels(ctrl.senderLang);
+                      }
+                      if (v) {
+                        ctrl.enableMesh().then((ok) {
+                          if (mounted && !ok) {
+                            ScaffoldMessenger.of(this.context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    'Bluetooth unavailable — running in loopback mode'),
+                                duration: Duration(seconds: 3),
+                              ),
+                            );
+                          }
+                        });
                       }
                     },
                     activeThumbColor: iTantraTheme.saffron,
@@ -236,6 +250,30 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(
                           fontSize: 11,
                           color: ctrl.senderModelsReady
+                              ? iTantraTheme.success
+                              : iTantraTheme.textMuted,
+                        ),
+                      ),
+                    ),
+
+                  // ── TTS Voice Download Banner ─────────────────
+                  if (ctrl.ttsDownloading)
+                    _ModelDownloadBanner(
+                      progress: ctrl.ttsDownloadProgress,
+                      status: ctrl.ttsDownloadStatus,
+                    ),
+
+                  // ── Voice Ready / Manual Voice Download ───────
+                  if (_transceiverOn &&
+                      !ctrl.ttsDownloading &&
+                      ctrl.ttsDownloadStatus.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                      child: Text(
+                        ctrl.ttsDownloadStatus,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: ctrl.receiverTtsReady
                               ? iTantraTheme.success
                               : iTantraTheme.textMuted,
                         ),

@@ -1,16 +1,18 @@
 /// iTantra language registry — NETWORK_PROTOCOL.md §3 wire IDs.
 ///
 /// Each language carries its BCP 47 locale string (for STT/TTS engines),
-/// its 4-bit wire ID (for iBFS-v1 Lang nibble), and the relative path
-/// to its sherpa-onnx INT8 ONNX model (downloaded at first launch via
-/// scripts/fetch_models.py).
+/// its 4-bit wire ID (for iBFS-v1 Lang nibble), and the relative paths
+/// to its sherpa-onnx INT8 ONNX models (downloaded at first use via the
+/// in-app model manager).
 class Lang {
   final String code; // BCP 47
   final String name; // Display name
   final int wireId; // 4-bit wire code (0x0–0x09)
   final String iso639; // 2-letter shorthand for distress classifier
-  final String sttModel; // Relative path to INT8 ONNX model
-  final String sttTokens; // Relative path to tokens.txt
+  final String sttModel; // Relative path to INT8 ONNX STT model
+  final String sttTokens; // Relative path to STT tokens.txt
+  final String ttsModel; // Relative path to VITS ONNX TTS model
+  final String ttsTokens; // Relative path to TTS tokens.txt
 
   const Lang({
     required this.code,
@@ -19,6 +21,8 @@ class Lang {
     required this.iso639,
     required this.sttModel,
     required this.sttTokens,
+    this.ttsModel = 'models/tts/model.onnx',
+    this.ttsTokens = 'models/tts/tokens.txt',
   });
 
   @override
@@ -28,8 +32,7 @@ class Lang {
 /// Supported languages — order matches NETWORK_PROTOCOL.md §3 table.
 ///
 /// Model paths are relative to the app's documents directory.
-/// They are downloaded on first launch via scripts/fetch_models.py
-/// or the in-app model manager.
+/// They are downloaded on first use via the in-app model manager.
 const List<Lang> kLanguages = [
   Lang(
     code: 'hi-IN', name: 'Hindi', wireId: 0x0, iso639: 'hi',
@@ -66,9 +69,8 @@ const List<Lang> kLanguages = [
     sttModel: 'models/stt/ml/model.int8.onnx',
     sttTokens: 'models/stt/ml/tokens.txt',
   ),
-  // Odia: model not yet available on HuggingFace.
-  // Convert manually from AI4Bharat IndicConformer checkpoint.
-  // Falls back to platform STT when model file is missing.
+  // Odia: neither STT nor TTS models are available on HuggingFace yet.
+  // Falls back to platform STT/TTS when model files are missing.
   Lang(
     code: 'or-IN', name: 'Odia', wireId: 0x7, iso639: 'or',
     sttModel: 'models/stt/or/model.int8.onnx',
