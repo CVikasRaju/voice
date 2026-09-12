@@ -78,3 +78,5 @@ assets/models/tts/*.onnx
 *.tar.gz
 *.zip
 *.7z
+# Widget Preview related
+.widget_preview/

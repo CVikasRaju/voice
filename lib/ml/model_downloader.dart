@@ -19,14 +19,31 @@ class ModelDownloader {
   static const String _baseUrl =
       'https://huggingface.co/parismitaglobalsolutions/indicconformer-sherpa-onnx/resolve/main';
 
-  /// Check if STT models are already downloaded for [lang].
+  /// Check if STT models are already downloaded and valid for [lang].
   static Future<bool> areModelsAvailable(Lang lang) async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
-      final modelPath = '${appDir.path}/${lang.sttModel}';
-      final tokensPath = '${appDir.path}/${lang.sttTokens}';
-      return await File(modelPath).exists() &&
-          await File(tokensPath).exists();
+      final modelFile = File('${appDir.path}/${lang.sttModel}');
+      final tokensFile = File('${appDir.path}/${lang.sttTokens}');
+
+      if (!await modelFile.exists() || !await tokensFile.exists()) {
+        return false;
+      }
+
+      final modelLen = await modelFile.length();
+      final tokensLen = await tokensFile.length();
+
+      // Model must be >= 50MB and tokens >= 1KB.
+      // If smaller, it is an incomplete/corrupted download — clean it up.
+      if (modelLen < 50000000 || tokensLen < 1000) {
+        try {
+          if (await modelFile.exists()) await modelFile.delete();
+          if (await tokensFile.exists()) await tokensFile.delete();
+        } catch (_) {}
+        return false;
+      }
+
+      return true;
     } catch (_) {
       return false;
     }
@@ -111,6 +128,12 @@ class ModelDownloader {
         }
       }
       await sink.close();
+
+      if (totalBytes > 0 && receivedBytes < totalBytes) {
+        throw HttpException(
+          'Incomplete download: received $receivedBytes of $totalBytes bytes',
+        );
+      }
     } finally {
       client.close();
     }

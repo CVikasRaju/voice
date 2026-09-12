@@ -256,9 +256,14 @@ class TransceiverController extends ChangeNotifier {
 
     _modelsDownloading = false;
     if (success) {
-      _modelsDownloadStatus = '${_senderLang.name} models ready';
       // Auto-initialize the recognizer with the new models.
-      await stt.init(_senderLang);
+      final initErr = await stt.init(_senderLang);
+      if (initErr == null) {
+        _modelsDownloadStatus = '${_senderLang.name} models ready ✓';
+      } else {
+        // Show the real sherpa-onnx error to the user.
+        _modelsDownloadStatus = 'Load failed: $initErr';
+      }
     } else {
       _modelsDownloadStatus = 'Download failed — check connection';
     }
@@ -286,8 +291,12 @@ class TransceiverController extends ChangeNotifier {
 
     _modelsDownloading = false;
     if (success) {
-      _modelsDownloadStatus = '${lang.name} models ready';
-      await stt.init(lang);
+      final initErr = await stt.init(lang);
+      if (initErr == null) {
+        _modelsDownloadStatus = '${lang.name} models ready ✓';
+      } else {
+        _modelsDownloadStatus = 'Load failed: $initErr';
+      }
     } else {
       _modelsDownloadStatus = 'Download failed — check connection';
     }
@@ -324,6 +333,16 @@ class TransceiverController extends ChangeNotifier {
   Future<void> startPtt() async {
     if (_phase != TransceiverPhase.idle) return;
 
+    // If models are not ready yet, trigger download without blocking PTT.
+    // The download will update interimText with progress messages.
+    // The phase stays idle so typed messages still work during download.
+    if (!stt.isReady) {
+      if (!_modelsDownloading) {
+        await downloadSenderModels();
+      }
+      return;
+    }
+
     _phase = TransceiverPhase.recording;
     _interimText = '';
     _sttStartMs = DateTime.now().millisecondsSinceEpoch;
@@ -334,11 +353,20 @@ class TransceiverController extends ChangeNotifier {
       onResult: (text, isFinal) {
         _interimText = text;
         notifyListeners();
-        if (isFinal) {
+        // Only treat as transcript when isFinal=true AND it's real speech
+        // (not a status/error message from the engine).
+        if (isFinal && text.trim().isNotEmpty) {
           _processTranscript(text);
         }
       },
     );
+
+    // If stt.start() returned without starting the recorder (e.g. model
+    // load error, permission denied), reset phase to idle so typed text works.
+    if (!stt.isListening) {
+      _phase = TransceiverPhase.idle;
+      notifyListeners();
+    }
   }
 
   /// Stop recording on PTT release; process whatever we have.

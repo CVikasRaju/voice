@@ -135,12 +135,10 @@ class SwitchableTransport implements Transport {
 
   @override
   Future<int> send(Uint8List frame) {
-    if (_active is BleTransportAdapter) _mesh.resetHops();
+    if (_active is BleTransportAdapter) mesh.resetHops();
     return _active.send(frame);
   }
 
-  // Convenience accessor.
-  BleMeshTransport get _mesh => mesh;
 
   @override
   Stream<Uint8List> get incoming => _controller.stream;

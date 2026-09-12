@@ -27,7 +27,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _transceiverOn = false;
+  bool _transceiverOn = true;
   bool _permissionsChecked = false;
   final _textController = TextEditingController();
   final _textFocusNode = FocusNode();
@@ -35,7 +35,15 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _textController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _requestPermissions();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final ctrl = Provider.of<TransceiverController>(context, listen: false);
+      ctrl.predownloadModels(ctrl.senderLang);
+    });
   }
 
   @override
@@ -325,9 +333,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                         !ctrl.modelsDownloading &&
                                         _textController.text.trim().isNotEmpty
                                     ? () {
-                                        ctrl.sendTypedText(_textController.text);
+                                        final text = _textController.text.trim();
                                         _textController.clear();
                                         _textFocusNode.unfocus();
+                                        setState(() {});
+                                        ctrl.sendTypedText(text);
                                       }
                                     : null,
                               ),
@@ -336,10 +346,14 @@ class _HomeScreenState extends State<HomeScreen> {
                               fontSize: 13,
                               color: iTantraTheme.textPrimary,
                             ),
+                            onChanged: (_) => setState(() {}),
                             onSubmitted: (v) {
-                              if (v.trim().isNotEmpty) {
-                                ctrl.sendTypedText(v);
+                              if (v.trim().isNotEmpty &&
+                                  _transceiverOn &&
+                                  ctrl.phase == TransceiverPhase.idle) {
                                 _textController.clear();
+                                setState(() {});
+                                ctrl.sendTypedText(v.trim());
                               }
                             },
                           ),

@@ -42,8 +42,8 @@ class StoreForwardQueue {
   bool get hasPending => _queue.isNotEmpty;
 
   /// All queued entries (for UI display).
-  List<_QueuedFrameInfo> get pending =>
-      _queue.map((e) => _QueuedFrameInfo.fromFrame(e)).toList();
+  List<QueuedFrameInfo> get pending =>
+      _queue.map(QueuedFrameInfo._from).toList();
 
   /// Try to flush queued messages if transport is connected.
   void _tryFlush() {
@@ -146,18 +146,19 @@ class _QueuedFrame {
       };
 }
 
-class _QueuedFrameInfo {
+class QueuedFrameInfo {
   final int sequenceId;
   final DateTime queuedAt;
   final int frameSize;
 
-  _QueuedFrameInfo({
+  QueuedFrameInfo({
     required this.sequenceId,
     required this.queuedAt,
     required this.frameSize,
   });
 
-  factory _QueuedFrameInfo.fromFrame(_QueuedFrame f) => _QueuedFrameInfo(
+  // Internal factory — not exposed in public API signature.
+  static QueuedFrameInfo _from(_QueuedFrame f) => QueuedFrameInfo(
         sequenceId: f.sequenceId,
         queuedAt: f.queuedAt,
         frameSize: f.frame.length,
