@@ -8,6 +8,11 @@ import '../../core/theme.dart';
 /// - IDLE:    dark circle, saffron ring — press to talk
 /// - RECORDING: pulsing saffron fill — release to send
 /// - PROCESSING/TRANSMITTING: spinning indicator
+///
+/// IMPORTANT: the press/release handlers are captured when the gesture
+/// *starts*. `isActive` flips to false the moment recording begins (the
+/// controller leaves the idle phase), so gating `onTapUp` on `isActive`
+/// would swallow the release event and brick the button mid-hold.
 class PttButton extends StatefulWidget {
   final VoidCallback onPressed;
   final VoidCallback onReleased;
@@ -50,24 +55,23 @@ class _PttButtonState extends State<PttButton>
       builder: (context, constraints) {
         final size = constraints.maxWidth.clamp(120.0, 200.0);
         return GestureDetector(
-          onTapDown: widget.isActive
-              ? (_) {
-                  setState(() => _holding = true);
-                  widget.onPressed();
-                }
-              : null,
-          onTapUp: widget.isActive
-              ? (_) {
-                  setState(() => _holding = false);
-                  widget.onReleased();
-                }
-              : null,
-          onTapCancel: widget.isActive
-              ? () {
-                  setState(() => _holding = false);
-                  widget.onReleased();
-                }
-              : null,
+          onTapDown: (_) {
+            if (!widget.isActive) return;
+            setState(() => _holding = true);
+            widget.onPressed();
+          },
+          // Release fires whenever a hold is in progress, even though
+          // `isActive` is false while recording.
+          onTapUp: (_) {
+            if (!_holding) return;
+            setState(() => _holding = false);
+            widget.onReleased();
+          },
+          onTapCancel: () {
+            if (!_holding) return;
+            setState(() => _holding = false);
+            widget.onReleased();
+          },
           child: AnimatedBuilder(
             animation: _pulse,
             builder: (context, child) {

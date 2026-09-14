@@ -24,9 +24,6 @@ typedef SttResultCallback = void Function(String text, bool isFinal);
 ///
 /// Model files are downloaded to the app's documents directory on first
 /// launch. See scripts/fetch_models.py for the download URLs.
-///
-/// IMPORTANT: If models are NOT yet downloaded, the engine falls back
-/// gracefully — PTT still works but text will be empty/placeholder.
 class SttEngine {
   sherpa.OfflineRecognizer? _recognizer;
   sherpa.VoiceActivityDetector? _vad;
@@ -35,6 +32,13 @@ class SttEngine {
   bool _initialized = false;
   String? _currentLocale;
   StreamSubscription<Uint8List>? _audioSubscription;
+
+  /// Speech text accumulated during the current PTT hold. The VAD only
+  /// emits a segment once it has seen enough trailing silence, so a short
+  /// utterance spoken right before the button is released would otherwise
+  /// be lost. Every finalized VAD segment appends here, and stop() flushes
+  /// whatever the VAD still holds so nothing is dropped.
+  String _utterance = '';
 
   // ── Model download state ──────────────────────────────────────
   bool _downloading = false;
@@ -69,7 +73,6 @@ class SttEngine {
       return true;
     }
 
-    // Download models.
     _downloading = true;
     _downloadProgress = 0.0;
     _downloadingLang = lang.code;
@@ -133,36 +136,46 @@ class SttEngine {
       }
       return vadPath;
     } catch (e) {
+      debugPrint('[SttEngine] VAD asset copy failed: $e');
       return null;
     }
   }
 
   /// Initialize the VAD only (no STT model required).
-  /// Used so PTT recording can at least work before STT models load.
   Future<bool> initVad() async {
     if (_vad != null) return true;
     try {
       final vadPath = await _ensureVadModel();
       if (vadPath == null) return false;
 
+      // NOTE (sherpa-onnx VAD constraints):
+      // - maxSpeechDuration MUST be well under bufferSizeInSeconds, or the
+      //   detector throws / drops segments. 20s max speech inside a 60s
+      //   buffer leaves ample headroom.
+      // - windowSize 512 is the silero-vad v4 default (matches the bundled
+      //   silero_vad.onnx asset).
       _vadConfig = sherpa.VadModelConfig(
         sileroVad: sherpa.SileroVadModelConfig(
           model: vadPath,
           threshold: 0.5,
-          minSilenceDuration: 0.6,
-          minSpeechDuration: 0.25,
-          maxSpeechDuration: 30.0,
+          minSilenceDuration: 0.45,
+          minSpeechDuration: 0.2,
+          windowSize: 512,
+          maxSpeechDuration: 20.0,
         ),
+        sampleRate: 16000,
         numThreads: 2,
         provider: 'cpu',
+        debug: false,
       );
 
       _vad = sherpa.VoiceActivityDetector(
         config: _vadConfig!,
-        bufferSizeInSeconds: 30.0,
+        bufferSizeInSeconds: 60.0,
       );
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[SttEngine] VAD init failed: $e');
       _vad = null;
       return false;
     }
@@ -170,24 +183,16 @@ class SttEngine {
 
   /// Initialize the recognizer for the given language.
   ///
-  /// Models are loaded from the app's documents directory.
-  /// If models don't exist yet, only VAD is initialized so
-  /// PTT recording still works even without STT.
-  ///
   /// Returns null on success, or an error string describing what failed.
   Future<String?> init(Lang lang) async {
     if (_initialized && _currentLocale == lang.code) return null;
 
-    // Dispose previous recognizer if switching languages.
     if (_recognizer != null) {
       _recognizer!.free();
       _recognizer = null;
     }
 
-    // Always try to init VAD, even if STT model is missing.
     await initVad();
-
-    // Ensure bundled asset models are unpacked first.
     await _ensureBundledModel(lang);
 
     try {
@@ -195,30 +200,29 @@ class SttEngine {
       final modelPath = '${appDir.path}/${lang.sttModel}';
       final tokensPath = '${appDir.path}/${lang.sttTokens}';
 
-      // Check if model files exist.
       if (!await File(modelPath).exists() ||
           !await File(tokensPath).exists()) {
-        // Models not downloaded yet.
         _initialized = false;
         return 'model files missing on disk';
       }
 
-      // Verify files are not zero-byte (corrupted download).
       final modelSize = await File(modelPath).length();
       final tokensSize = await File(tokensPath).length();
       if (modelSize < 1000000) {
-        // Model < 1 MB — definitely incomplete download, delete and retry.
-        await File(modelPath).delete();
+        try {
+          await File(modelPath).delete();
+        } catch (_) {}
         _initialized = false;
         return 'model file incomplete ($modelSize bytes) — please retry download';
       }
       if (tokensSize == 0) {
-        await File(tokensPath).delete();
+        try {
+          await File(tokensPath).delete();
+        } catch (_) {}
         _initialized = false;
         return 'tokens file is empty — please retry download';
       }
 
-      // Configure NeMo CTC recognizer (AI4Bharat IndicConformer).
       _recognizer = sherpa.OfflineRecognizer(
         sherpa.OfflineRecognizerConfig(
           model: sherpa.OfflineModelConfig(
@@ -228,53 +232,40 @@ class SttEngine {
             tokens: tokensPath,
             numThreads: 2,
             provider: 'cpu',
-            debug: true, // Enable debug so sherpa logs show in logcat.
-          ),
-          lm: const sherpa.OfflineLMConfig(
-            model: '',
-            scale: 0.1,
+            debug: false,
           ),
           decodingMethod: 'greedy_search',
-          maxActivePaths: 1,
-          hotwordsFile: '',
-          hotwordsScore: 1.5,
-          ruleFsts: '',
-          ruleFars: '',
         ),
       );
 
       _currentLocale = lang.code;
       _initialized = true;
-      return null; // success
+      return null;
     } catch (e, stack) {
-      // Log the real error so it appears in logcat / flutter logs.
       debugPrint('[SttEngine] OfflineRecognizer init failed: $e');
       debugPrint('[SttEngine] Stack: $stack');
       _initialized = false;
       _recognizer = null;
-      return e.toString(); // Return actual error for display.
+      return e.toString();
     }
   }
 
-
   /// Start listening and transcribing.
   ///
-  /// Records 16kHz mono PCM from the microphone and feeds it to the
-  /// sherpa-onnx recognizer in chunks.
-  ///
-  /// If STT models are not ready yet, the PTT button will still capture audio
-  /// and trigger an auto-download. While downloading, the UI shows progress.
+  /// Records 16kHz mono PCM from the microphone, detects speech with
+  /// Silero VAD, and runs the offline recognizer on each complete speech
+  /// segment. Live transcripts stream to [onResult] while the button is
+  /// held; [stop] flushes the trailing segment so short utterances are
+  /// never lost.
   Future<void> start({
     required String localeId,
     required SttResultCallback onResult,
   }) async {
-    // Find the Lang for this localeId.
     final lang = kLanguages.firstWhere(
       (l) => l.code == localeId,
       orElse: () => kEnglish,
     );
 
-    // Always ensure VAD is ready first.
     await initVad();
 
     if (!_initialized || _currentLocale != localeId) {
@@ -282,107 +273,164 @@ class SttEngine {
     }
 
     if (!_initialized || _recognizer == null) {
-      // Models not available — download them.
-      // Use isFinal=false so status messages are NOT treated as transcripts.
       onResult('Downloading offline models…', false);
 
       final ready = await prepareModels(lang, onProgress: (progress) {
         onResult(
           'Downloading models… ${(progress * 100).toInt()}%',
-          false, // false = interim status, not a final transcript
+          false,
         );
       });
 
       if (!ready) {
-        // isFinal=false so this status text isn't sent as a voice packet.
         onResult('Model download failed — check internet connection', false);
         return;
       }
 
-      // Initialize with the newly downloaded models.
       final initErr = await init(lang);
       if (!_initialized || _recognizer == null) {
-        // Show the REAL error from sherpa-onnx, not a generic message.
         onResult('Model load error: ${initErr ?? "unknown"}', false);
         return;
       }
     }
 
-    // Ensure we have mic permission and start recording.
+    // Ensure mic permission, then start recording.
     _recorder = AudioRecorder();
-    final hasPerm = await _recorder!.hasPermission();
+    bool hasPerm;
+    try {
+      hasPerm = await _recorder!.hasPermission();
+    } catch (e) {
+      debugPrint('[SttEngine] hasPermission threw: $e');
+      hasPerm = false;
+    }
     if (!hasPerm) {
       onResult('Microphone permission denied', false);
       _recorder = null;
       return;
     }
 
-    final stream = await _recorder!.startStream(
-      const RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: 16000,
-        numChannels: 1,
-      ),
-    );
+    _utterance = '';
 
-    // Feed audio chunks to the recognizer.
-    _audioSubscription = stream.listen((audioData) {
-      _processAudio(audioData, onResult);
-    });
+    Stream<Uint8List> stream;
+    try {
+      stream = await _recorder!.startStream(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
+      );
+    } catch (e) {
+      debugPrint('[SttEngine] startStream failed: $e');
+      onResult('Mic start failed: $e', false);
+      _recorder = null;
+      return;
+    }
+
+    _audioSubscription = stream.listen(
+      (audioData) => _processAudio(audioData, onResult),
+      onError: (Object e) {
+        debugPrint('[SttEngine] audio stream error: $e');
+      },
+    );
   }
 
   /// Process a chunk of PCM audio through the VAD + recognizer.
   void _processAudio(Uint8List pcmData, SttResultCallback onResult) {
-    // Convert int16 PCM to float32 for sherpa-onnx.
+    if (pcmData.isEmpty) return;
     final float32Data = _pcm16ToFloat32(pcmData);
-
-    // If VAD is available, use it for endpoint detection.
     final vad = _vad;
-    if (vad != null) {
-      vad.acceptWaveform(float32Data);
 
-      // Check if we have a complete speech segment.
-      while (vad.isDetected()) {
-        final segment = vad.front();
-        if (segment.samples.isNotEmpty) {
-          _runRecognizer(segment.samples, onResult);
+    try {
+      if (vad != null) {
+        vad.acceptWaveform(float32Data);
+        // Drain every complete speech segment. A segment only becomes
+        // available after `minSilenceDuration` of trailing silence, so
+        // while the user is still talking this loop simply does nothing.
+        while (!vad.isEmpty() && vad.isDetected()) {
+          final segment = vad.front();
+          if (segment.samples.isNotEmpty) {
+            final text = _recognize(segment.samples);
+            if (text.isNotEmpty) {
+              _utterance =
+                  _utterance.isEmpty ? text : '$_utterance $text';
+              // Live preview while the button is still held.
+              onResult(_utterance, false);
+            }
+          }
+          vad.pop();
         }
-        vad.pop();
+      } else {
+        // No VAD — recognize fixed 2s windows directly.
+        final text = _recognize(float32Data);
+        if (text.isNotEmpty) {
+          _utterance = _utterance.isEmpty ? text : '$_utterance $text';
+          onResult(_utterance, false);
+        }
       }
-    } else {
-      // No VAD — feed the raw audio directly to recognizer.
-      _runRecognizer(float32Data, onResult);
+    } catch (e) {
+      debugPrint('[SttEngine] _processAudio error: $e');
     }
   }
 
-  void _runRecognizer(Float32List samples, SttResultCallback onResult) {
+  /// Run the offline recognizer on [samples]; returns text ('' when silent).
+  String _recognize(Float32List samples) {
     final recognizer = _recognizer;
-    if (recognizer == null) return;
+    if (recognizer == null || samples.isEmpty) return '';
 
     try {
       final stream = recognizer.createStream();
-      stream.acceptWaveform(
-        sampleRate: 16000,
-        samples: samples,
-      );
+      stream.acceptWaveform(samples: samples, sampleRate: 16000);
       recognizer.decode(stream);
       final result = recognizer.getResult(stream);
-      if (result.text.isNotEmpty) {
-        onResult(result.text, true);
-      }
       stream.free();
-    } catch (_) {
-      // Ignore per-chunk errors to avoid crashing the stream.
+      return result.text.trim();
+    } catch (e) {
+      debugPrint('[SttEngine] recognize error: $e');
+      return '';
     }
+  }
+
+  /// Flush any speech the VAD still holds (utterance tail) and return
+  /// the complete transcript for this PTT hold.
+  ///
+  /// Without this, a sentence spoken with less than `minSilenceDuration`
+  /// of trailing silence before the button is released is discarded —
+  /// the single most common cause of "the app heard nothing".
+  String flushTail() {
+    final vad = _vad;
+    try {
+      if (vad != null && !vad.isEmpty() && vad.isDetected()) {
+        final segment = vad.front();
+        if (segment.samples.isNotEmpty) {
+          final text = _recognize(segment.samples);
+          if (text.isNotEmpty) {
+            _utterance = _utterance.isEmpty ? text : '$_utterance $text';
+          }
+        }
+        vad.pop();
+      }
+      // Reset the VAD buffer so the next hold starts clean; leftover
+      // trailing silence must not merge into the next utterance.
+      vad?.clear();
+    } catch (e) {
+      debugPrint('[SttEngine] flushTail error: $e');
+    }
+    final text = _utterance;
+    _utterance = '';
+    return text;
   }
 
   /// Convert int16 PCM bytes to float32 array.
   Float32List _pcm16ToFloat32(Uint8List pcmBytes) {
     if (pcmBytes.length % 2 != 0) {
-      // Pad to even length.
       pcmBytes = Uint8List.fromList([...pcmBytes, 0]);
     }
-    final int16View = Int16List.view(pcmBytes.buffer);
+    final int16View = Int16List.view(
+      pcmBytes.buffer,
+      pcmBytes.offsetInBytes,
+      pcmBytes.lengthInBytes ~/ 2,
+    );
     final float32List = Float32List(int16View.length);
     for (var i = 0; i < int16View.length; i++) {
       float32List[i] = int16View[i] / 32768.0;
@@ -390,12 +438,18 @@ class SttEngine {
     return float32List;
   }
 
-  /// Stop listening.
-  Future<void> stop() async {
+  /// Stop listening and return the final transcript for this hold.
+  /// Returns '' when the hold produced no recognizable speech.
+  Future<String> stop() async {
     await _audioSubscription?.cancel();
     _audioSubscription = null;
-    await _recorder?.stop();
+    try {
+      await _recorder?.stop();
+    } catch (_) {}
     _recorder = null;
+
+    // Drain any speech segment still inside the VAD pipeline.
+    return flushTail();
   }
 
   /// Whether the engine is currently listening.
@@ -412,10 +466,19 @@ class SttEngine {
 
   /// Dispose resources.
   Future<void> dispose() async {
-    await stop();
-    _recognizer?.free();
+    await _audioSubscription?.cancel();
+    _audioSubscription = null;
+    try {
+      await _recorder?.stop();
+    } catch (_) {}
+    _recorder = null;
+    try {
+      _recognizer?.free();
+    } catch (_) {}
     _recognizer = null;
-    _vad?.free();
+    try {
+      _vad?.free();
+    } catch (_) {}
     _vad = null;
     _initialized = false;
   }

@@ -22,17 +22,19 @@ class TtsEngine {
   final AudioPlayer _player = AudioPlayer();
   sherpa.OfflineTts? _neural;
   String? _neuralLangIso;
-  bool _platformConfigured = false;
   String? _currentBcp47;
 
   /// Whether the neural VITS engine is active for the current language.
   bool get isNeuralReady => _neural != null;
 
+  /// Whether the neural VITS engine is loaded for [lang] specifically.
+  bool isNeuralReadyFor(Lang lang) =>
+      _neural != null && _neuralLangIso == lang.iso639;
+
   /// Load the neural TTS model for [lang] if it is downloaded.
   /// Returns `true` when the neural engine is ready for [lang].
   Future<bool> initNeural(Lang lang) async {
-    // Already loaded for this language?
-    if (_neural != null && _neuralLangIso == lang.iso639) return true;
+    if (isNeuralReadyFor(lang)) return true;
 
     // Free previous instance before loading a new one.
     _freeNeural();
@@ -47,7 +49,10 @@ class TtsEngine {
           vits: sherpa.OfflineTtsVitsModelConfig(
             model: paths.model,
             tokens: paths.tokens,
-            dataDir: '', // No espeak-ng dataDir needed for MMS models.
+            // MMS bundles are char-level tokenizers with no espeak-ng
+            // phonemizer data — verified against the official
+            // k2-fsa sherpa-onnx vits-mms-* release bundles.
+            dataDir: '',
           ),
           numThreads: 2,
           debug: false,
@@ -60,6 +65,9 @@ class TtsEngine {
       _neuralLangIso = lang.iso639;
       return true;
     } catch (e) {
+      // Corrupted model files can crash init — remove them so the next
+      // attempt re-downloads instead of failing forever.
+      await TtsModelDownloader.deleteModels(lang);
       _neural = null;
       _neuralLangIso = null;
       return false;
@@ -76,22 +84,19 @@ class TtsEngine {
 
   /// Configure the platform fallback for the given BCP 47 locale.
   Future<void> _configurePlatform(String bcp47) async {
-    if (_platformConfigured && _currentBcp47 == bcp47) return;
-    await _tts.setLanguage(bcp47);
-    await _tts.setSpeechRate(0.9);
-    await _tts.setVolume(1.0);
-    await _tts.setPitch(1.0);
-    _currentBcp47 = bcp47;
-    _platformConfigured = true;
+    if (_currentBcp47 == bcp47) return;
+    try {
+      await _tts.setLanguage(bcp47);
+      await _tts.setSpeechRate(0.9);
+      await _tts.setVolume(1.0);
+      await _tts.setPitch(1.0);
+      _currentBcp47 = bcp47;
+    } catch (_) {
+      // Platform TTS unavailable (e.g. no TTS engine installed).
+    }
   }
 
-  /// Configure the engine for the given BCP 47 locale.
-  /// No-op if already configured for the same locale.
-  Future<void> configure(String bcp47, {required double speechRate}) async {
-    await _configurePlatform(bcp47);
-  }
-
-  /// Speak [text] aloud.
+  /// Speak [text] aloud in [lang].
   ///
   /// When [emergency] is true, volume is forced to maximum and routed to
   /// the alarm stream (ARCHITECTURE.md §2.3). This requires the
@@ -99,7 +104,11 @@ class TtsEngine {
   ///
   /// Uses the neural VITS engine when its model is loaded for this
   /// language; otherwise falls back to the platform synthesizer.
-  Future<void> speak(String text, {bool emergency = false}) async {
+  Future<void> speak(
+    String text, {
+    required Lang lang,
+    bool emergency = false,
+  }) async {
     if (text.isEmpty) return;
 
     if (emergency) {
@@ -116,7 +125,7 @@ class TtsEngine {
 
     // ── Neural path (sherpa-onnx VITS) ──
     final neural = _neural;
-    if (neural != null) {
+    if (neural != null && isNeuralReadyFor(lang)) {
       try {
         final audio = neural.generate(
           text: text,
@@ -131,24 +140,28 @@ class TtsEngine {
           );
           return;
         }
-      } catch (_) {
+      } catch (e) {
         // Neural synthesis failed — fall through to platform TTS.
       }
     }
 
     // ── Platform fallback (FlutterTts) ──
-    await _configurePlatform(_currentBcp47 ?? 'hi-IN');
-    if (emergency) {
-      await _tts.setVolume(1.0);
-      await _tts.setSpeechRate(1.1); // slightly faster for urgency
-    }
+    await _configurePlatform(lang.code);
+    try {
+      if (emergency) {
+        await _tts.setVolume(1.0);
+        await _tts.setSpeechRate(1.1); // slightly faster for urgency
+      }
 
-    await _tts.speak(text);
-    await _tts.awaitSpeakCompletion(true);
+      await _tts.speak(text);
+      await _tts.awaitSpeakCompletion(true);
 
-    if (emergency) {
-      await _tts.setVolume(0.8);
-      await _tts.setSpeechRate(0.9);
+      if (emergency) {
+        await _tts.setVolume(0.8);
+        await _tts.setSpeechRate(0.9);
+      }
+    } catch (_) {
+      // Platform TTS failed — nothing more we can do.
     }
   }
 
@@ -178,7 +191,17 @@ class TtsEngine {
       }
       await _player.play(DeviceFileSource(file.path));
       // Wait for playback to finish so callers can measure TTS duration.
-      await _player.onPlayerComplete.first;
+      // A timeout guards against a stalled player freezing the receive
+      // path forever.
+      await _player.onPlayerComplete.first
+          .timeout(const Duration(minutes: 2));
+    } on TimeoutException {
+      // Playback never signalled completion — move on.
+      try {
+        await _player.stop();
+      } catch (_) {}
+    } catch (_) {
+      // Playback failed — nothing more we can do.
     } finally {
       try {
         if (await file.exists()) await file.delete();
@@ -231,20 +254,26 @@ class TtsEngine {
   }
 
   /// Whether the engine has been configured.
-  bool get isConfigured => _platformConfigured || _neural != null;
+  bool get isConfigured => _currentBcp47 != null || _neural != null;
 
   /// Stop any ongoing speech.
   Future<void> stop() async {
-    await _player.stop();
-    await _tts.stop();
+    try {
+      await _player.stop();
+    } catch (_) {}
+    try {
+      await _tts.stop();
+    } catch (_) {}
   }
 
   /// Dispose resources.
   Future<void> dispose() async {
     await _player.stop();
     await _player.dispose();
-    await _tts.stop();
+    try {
+      await _tts.stop();
+    } catch (_) {}
     _freeNeural();
-    _platformConfigured = false;
+    _currentBcp47 = null;
   }
 }

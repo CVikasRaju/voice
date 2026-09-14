@@ -191,7 +191,7 @@ class TransceiverController extends ChangeNotifier {
   String get ttsDownloadStatus => _ttsDownloadStatus;
 
   /// Whether the receiver language has a neural TTS engine ready.
-  bool get receiverTtsReady => tts.isNeuralReady;
+  bool get receiverTtsReady => tts.isNeuralReadyFor(_receiverLang);
 
   /// Download + initialize the neural TTS model for the receiver language.
   Future<bool> downloadReceiverTtsModels() async {
@@ -199,8 +199,8 @@ class TransceiverController extends ChangeNotifier {
   }
 
   Future<bool> _ensureTtsModels(Lang lang) async {
-    // Already loaded?
-    if (tts.isNeuralReady) return true;
+    // Already loaded for THIS language?
+    if (tts.isNeuralReadyFor(lang)) return true;
     // No neural model exists for this language (e.g. Odia) — platform TTS.
     if (!TtsModelDownloader.hasNeuralModel(lang)) return false;
     if (_ttsDownloading) return false;
@@ -226,8 +226,10 @@ class TransceiverController extends ChangeNotifier {
 
     _ttsDownloading = false;
     if (available) {
-      _ttsDownloadStatus = '${lang.name} voice ready';
-      await tts.initNeural(lang);
+      final loaded = await tts.initNeural(lang);
+      _ttsDownloadStatus = loaded
+          ? '${lang.name} neural voice ready'
+          : '${lang.name} voice unavailable — using platform TTS';
     } else {
       _ttsDownloadStatus = 'Voice download failed — check connection';
     }
@@ -351,10 +353,11 @@ class TransceiverController extends ChangeNotifier {
     await stt.start(
       localeId: _senderLang.code,
       onResult: (text, isFinal) {
+        // isFinal=true messages arrive from _processTranscript below when
+        // a VAD segment closes mid-hold; status strings (download progress,
+        // permission errors) come with isFinal=false and are preview-only.
         _interimText = text;
         notifyListeners();
-        // Only treat as transcript when isFinal=true AND it's real speech
-        // (not a status/error message from the engine).
         if (isFinal && text.trim().isNotEmpty) {
           _processTranscript(text);
         }
@@ -385,14 +388,16 @@ class TransceiverController extends ChangeNotifier {
       return;
     }
 
-    await stt.stop();
-    // Give the engine a beat to flush the final result.
-    await Future.delayed(const Duration(milliseconds: 350));
+    // stop() flushes any speech segment still inside the VAD pipeline,
+    // so a short utterance spoken right before release is not lost.
+    final flushed = await stt.stop();
+    final text = (flushed.trim().isNotEmpty ? flushed : _interimText).trim();
 
-    if (_interimText.isNotEmpty) {
-      await _processTranscript(_interimText);
+    if (text.isNotEmpty) {
+      await _processTranscript(text);
     } else {
       _phase = TransceiverPhase.idle;
+      _interimText = '';
       notifyListeners();
     }
   }
@@ -559,11 +564,9 @@ class TransceiverController extends ChangeNotifier {
 
     final int? ttsMs;
     // Speak in the (possibly translated) target language.
-    await tts.configure(ttsLang.code, speechRate: 0.9);
-
     final ttsStart = DateTime.now().millisecondsSinceEpoch;
     await tts.speak(spokenText,
-        emergency: packet.priority == Priority.emergency);
+        lang: ttsLang, emergency: packet.priority == Priority.emergency);
     ttsMs = DateTime.now().millisecondsSinceEpoch - ttsStart;
 
     final e2eMs = DateTime.now().millisecondsSinceEpoch - e2eStart;
