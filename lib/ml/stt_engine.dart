@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, MethodChannel;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -105,27 +105,65 @@ class SttEngine {
       final tokensFile = File('${appDir.path}/${lang.sttTokens}');
 
       if (!await modelFile.exists() || await modelFile.length() < 50000000) {
-        try {
-          final byteData = await rootBundle.load('assets/${lang.sttModel}');
-          await modelFile.parent.create(recursive: true);
-          await modelFile.writeAsBytes(byteData.buffer.asUint8List(
-              byteData.offsetInBytes, byteData.lengthInBytes));
-        } catch (_) {
-          // Model not bundled in assets — will be downloaded dynamically if needed.
+        bool extracted = false;
+        if (Platform.isAndroid) {
+          try {
+            await const MethodChannel('itantra/audio_override').invokeMethod(
+              'extractAsset',
+              {
+                'assetPath': 'assets/${lang.sttModel}',
+                'destPath': modelFile.path,
+              },
+            );
+            extracted =
+                await modelFile.exists() && await modelFile.length() >= 50000000;
+          } catch (e) {
+            debugPrint('[SttEngine] Native model extract failed: $e');
+          }
+        }
+        if (!extracted) {
+          try {
+            final byteData = await rootBundle.load('assets/${lang.sttModel}');
+            await modelFile.parent.create(recursive: true);
+            await modelFile.writeAsBytes(byteData.buffer.asUint8List(
+                byteData.offsetInBytes, byteData.lengthInBytes));
+          } catch (e) {
+            debugPrint('[SttEngine] rootBundle model extract failed: $e');
+          }
         }
       }
 
       if (!await tokensFile.exists() || await tokensFile.length() < 1000) {
-        try {
-          final byteData = await rootBundle.load('assets/${lang.sttTokens}');
-          await tokensFile.parent.create(recursive: true);
-          await tokensFile.writeAsBytes(byteData.buffer.asUint8List(
-              byteData.offsetInBytes, byteData.lengthInBytes));
-        } catch (_) {
-          // Tokens not bundled in assets.
+        bool extracted = false;
+        if (Platform.isAndroid) {
+          try {
+            await const MethodChannel('itantra/audio_override').invokeMethod(
+              'extractAsset',
+              {
+                'assetPath': 'assets/${lang.sttTokens}',
+                'destPath': tokensFile.path,
+              },
+            );
+            extracted =
+                await tokensFile.exists() && await tokensFile.length() >= 1000;
+          } catch (e) {
+            debugPrint('[SttEngine] Native tokens extract failed: $e');
+          }
+        }
+        if (!extracted) {
+          try {
+            final byteData = await rootBundle.load('assets/${lang.sttTokens}');
+            await tokensFile.parent.create(recursive: true);
+            await tokensFile.writeAsBytes(byteData.buffer.asUint8List(
+                byteData.offsetInBytes, byteData.lengthInBytes));
+          } catch (e) {
+            debugPrint('[SttEngine] rootBundle tokens extract failed: $e');
+          }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[SttEngine] _ensureBundledModel error: $e');
+    }
   }
 
   /// Copy VAD asset from Flutter bundle into app documents directory.

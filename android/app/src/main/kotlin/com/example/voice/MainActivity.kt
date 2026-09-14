@@ -46,6 +46,34 @@ class MainActivity : FlutterActivity() {
                             result.error("ERR", e.message, null)
                         }
                     }
+                    "extractAsset" -> {
+                        val assetPath = call.argument<String>("assetPath")
+                        val destPath = call.argument<String>("destPath")
+                        if (assetPath == null || destPath == null) {
+                            result.error("ARG_ERR", "Missing path arguments", null)
+                            return@setMethodCallHandler
+                        }
+                        Thread {
+                            try {
+                                val destFile = java.io.File(destPath)
+                                destFile.parentFile?.mkdirs()
+                                val flutterAssetPath = if (assetPath.startsWith("flutter_assets/")) assetPath else "flutter_assets/$assetPath"
+                                assets.open(flutterAssetPath).use { input ->
+                                    java.io.FileOutputStream(destFile).use { output ->
+                                        val buffer = ByteArray(65536)
+                                        var bytesRead: Int
+                                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                                            output.write(buffer, 0, bytesRead)
+                                        }
+                                        output.flush()
+                                    }
+                                }
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread { result.error("COPY_ERR", e.message, null) }
+                            }
+                        }.start()
+                    }
                     else -> result.notImplemented()
                 }
             }

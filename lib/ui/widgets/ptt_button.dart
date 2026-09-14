@@ -14,16 +14,26 @@ import '../../core/theme.dart';
 /// Listener delivers onPointerDown/Up/Cancel directly through the
 /// rendering pipeline, which tracks the pointer independently of
 /// widget rebuilds.
+/// Hold-to-talk OR Tap-to-talk Walkie-Talkie Button.
+///
+/// Supports both interaction models:
+/// 1. Hold-to-talk: press & hold (> 400ms) to speak, release to send immediately.
+/// 2. Tap-to-talk: tap (< 400ms) to start listening; button pulses in recording mode;
+///    tap again when finished to send.
 class PttButton extends StatefulWidget {
   final VoidCallback onPressed;
   final VoidCallback onReleased;
   final bool isActive;
+  final bool isRecording;
+  final bool isProcessing;
 
   const PttButton({
     super.key,
     required this.onPressed,
     required this.onReleased,
     required this.isActive,
+    this.isRecording = false,
+    this.isProcessing = false,
   });
 
   @override
@@ -34,6 +44,8 @@ class _PttButtonState extends State<PttButton>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulse;
   bool _holding = false;
+  DateTime? _pointerDownTime;
+  bool _toggleMode = false;
 
   @override
   void initState() {
@@ -52,38 +64,64 @@ class _PttButtonState extends State<PttButton>
 
   @override
   Widget build(BuildContext context) {
+    final isListening = widget.isRecording || _holding || _toggleMode;
+
     return LayoutBuilder(
       builder: (context, constraints) {
-        final size = constraints.maxWidth.clamp(120.0, 200.0);
+        final size = constraints.maxWidth.clamp(130.0, 200.0);
         return Listener(
           onPointerDown: (_) {
-            // Only start a NEW press when idle and active.
-            if (_holding || !widget.isActive) return;
+            if (!widget.isActive || widget.isProcessing) return;
+
+            // If already recording in toggle mode, a tap stops and sends!
+            if (isListening && _toggleMode) {
+              _holding = false;
+              _toggleMode = false;
+              setState(() {});
+              widget.onReleased();
+              return;
+            }
+
+            _pointerDownTime = DateTime.now();
             _holding = true;
             setState(() {});
             widget.onPressed();
           },
-          // Release fires whenever a hold is in progress.
-          // Listener events are delivered through the rendering pipeline,
-          // so even if the widget rebuilds (isActive flips false), the
-          // RenderPointerListener continues tracking this pointer.
           onPointerUp: (_) {
             if (!_holding) return;
-            _holding = false;
-            setState(() {});
-            widget.onReleased();
+            final downTime = _pointerDownTime;
+            final holdDuration = downTime != null
+                ? DateTime.now().difference(downTime).inMilliseconds
+                : 0;
+
+            if (holdDuration < 380) {
+              // Quick tap: latch into toggle recording mode so speech is never lost!
+              _holding = false;
+              _toggleMode = true;
+              setState(() {});
+            } else {
+              // Held and released: send immediately.
+              _holding = false;
+              _toggleMode = false;
+              setState(() {});
+              widget.onReleased();
+            }
           },
           onPointerCancel: (_) {
-            if (!_holding) return;
-            _holding = false;
-            setState(() {});
-            widget.onReleased();
+            if (_holding) {
+              _holding = false;
+              _toggleMode = false;
+              setState(() {});
+              widget.onReleased();
+            }
           },
           child: AnimatedBuilder(
             animation: _pulse,
             builder: (context, child) {
-              final pulseScale = _holding ? 1.0 + _pulse.value * 0.08 : 1.0;
-              final glowOpacity = _holding ? 0.3 + _pulse.value * 0.3 : 0.0;
+              final pulseScale =
+                  isListening ? 1.0 + _pulse.value * 0.08 : 1.0;
+              final glowOpacity =
+                  isListening ? 0.35 + _pulse.value * 0.35 : 0.0;
 
               return Container(
                 width: size,
@@ -92,8 +130,9 @@ class _PttButtonState extends State<PttButton>
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: iTantraTheme.saffron.withValues(alpha: glowOpacity),
-                      blurRadius: 30,
+                      color: iTantraTheme.saffron
+                          .withValues(alpha: glowOpacity),
+                      blurRadius: 32,
                       spreadRadius: 10,
                     ),
                   ],
@@ -107,53 +146,99 @@ class _PttButtonState extends State<PttButton>
             child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                gradient: _holding
-                    ? RadialGradient(
+                gradient: isListening
+                    ? const RadialGradient(
                         colors: [
                           iTantraTheme.saffron,
                           iTantraTheme.saffronDark,
                         ],
                       )
                     : null,
-                color: _holding ? null : iTantraTheme.surfaceLight,
+                color: isListening ? null : iTantraTheme.surfaceLight,
                 border: Border.all(
-                  color: _holding
+                  color: isListening
                       ? iTantraTheme.saffronLight
-                      : iTantraTheme.saffron,
+                      : (widget.isActive
+                          ? iTantraTheme.saffron
+                          : iTantraTheme.border),
                   width: 3,
                 ),
               ),
               child: Center(
-                child: _holding
-                    ? const Icon(
-                        Icons.mic,
-                        size: 48,
-                        color: iTantraTheme.ink,
-                      )
-                    : Column(
+                child: widget.isProcessing
+                    ? const Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.mic,
-                            size: 40,
-                            color: widget.isActive
-                                ? iTantraTheme.saffron
-                                : iTantraTheme.textMuted,
+                          SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: iTantraTheme.saffron,
+                            ),
                           ),
-                          const SizedBox(height: 4),
+                          SizedBox(height: 8),
                           Text(
-                            widget.isActive ? 'HOLD TO TALK' : 'OFFLINE',
+                            'TRANSCRIBING',
                             style: TextStyle(
-                              fontSize: 10,
+                              fontSize: 9,
                               fontWeight: FontWeight.w700,
-                              letterSpacing: 1.5,
-                              color: widget.isActive
-                                  ? iTantraTheme.saffron
-                                  : iTantraTheme.textMuted,
+                              letterSpacing: 1.2,
+                              color: iTantraTheme.saffron,
                             ),
                           ),
                         ],
-                      ),
+                      )
+                    : isListening
+                        ? const Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.mic,
+                                size: 44,
+                                color: iTantraTheme.ink,
+                              ),
+                              SizedBox(height: 4),
+                              Text(
+                                'TAP TO SEND',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1.2,
+                                  color: iTantraTheme.ink,
+                                ),
+                              ),
+                            ],
+                          )
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.mic,
+                                size: 38,
+                                color: widget.isActive
+                                    ? iTantraTheme.saffron
+                                    : iTantraTheme.textMuted,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                widget.isActive
+                                    ? 'HOLD OR TAP\nTO TALK'
+                                    : 'OFFLINE',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.2,
+                                  height: 1.2,
+                                  color: widget.isActive
+                                      ? iTantraTheme.saffron
+                                      : iTantraTheme.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
               ),
             ),
           ),

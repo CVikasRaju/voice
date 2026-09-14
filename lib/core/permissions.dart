@@ -66,45 +66,19 @@ class PermissionManager {
   static Future<bool> _requestBluetooth() async {
     try {
       if (Platform.isAndroid) {
-        // Android 12+ (API 31): runtime BLUETOOTH_* permissions.
-        if (await _androidSdkInt() >= 31) {
-          final statuses = await [
-            Permission.bluetoothScan,
-            Permission.bluetoothConnect,
-            Permission.bluetoothAdvertise,
-          ].request();
-          return statuses.values.every((s) => s.isGranted);
-        }
-        // Android 11 and below: manifest permissions; location is required
-        // for BLE scanning (already requested in _requestLocation).
-        return true;
+        // Request modern Android 12+ Bluetooth permissions.
+        // permission_handler safely handles older Android versions by returning
+        // granted if declared in manifest.
+        final statuses = await [
+          Permission.bluetoothScan,
+          Permission.bluetoothConnect,
+          Permission.bluetoothAdvertise,
+        ].request();
+        return statuses.values.every((s) => s.isGranted || s.isLimited);
       }
       return true;
     } catch (_) {
       return false;
-    }
-  }
-
-  static Future<int> _androidSdkInt() async {
-    try {
-      // device_info_plus is not a dependency; use the platform channel via
-      // the permission_handler's underlying check instead. A cheap proxy:
-      // if the BLUETOOTH_SCAN permission is defined at runtime the device is
-      // API 31+. Simplest reliable check is osVersion parsing.
-      if (Platform.isAndroid) {
-        final version = Platform.operatingSystemVersion;
-        final match = RegExp(r'\d+').firstMatch(version);
-        final major = match != null ? int.tryParse(match.group(0)!) ?? 0 : 0;
-        // Android 12 == Linux kernel-level version string may vary; use the
-        // documented heuristic: API 31 ↔ Android 12. The OS version string on
-        // Android is like 'Android 12 (API 31)' in newer embedders; otherwise
-        // fall back to requesting (harmless when unnecessary).
-        if (major >= 12) return 31;
-        return 30;
-      }
-      return 0;
-    } catch (_) {
-      return 31; // Safer to attempt the runtime request.
     }
   }
 }

@@ -351,12 +351,10 @@ class TransceiverController extends ChangeNotifier {
 
   int? _sttStartMs;
 
-  /// Begin recording on PTT press.
-  ///
-  /// Always transitions to the recording phase immediately. stt.start() handles
-  /// model initialisation internally and streams progress via onResult callbacks,
-  /// so the user sees "Downloading…" live in the transcription preview rather than
-  /// a blocked UI.
+  bool get isRecording => _phase == TransceiverPhase.recording;
+  bool get isProcessing => _phase == TransceiverPhase.processing;
+
+  /// Begin recording on PTT press or tap.
   Future<void> startPtt() async {
     if (_phase != TransceiverPhase.idle) return;
 
@@ -368,9 +366,6 @@ class TransceiverController extends ChangeNotifier {
     await stt.start(
       localeId: _senderLang.code,
       onResult: (text, isFinal) {
-        // isFinal=true messages arrive when a VAD segment closes mid-hold.
-        // Status strings (download progress, permission errors) come with
-        // isFinal=false and are preview-only.
         _interimText = text;
         notifyListeners();
         if (isFinal && text.trim().isNotEmpty) {
@@ -379,23 +374,27 @@ class TransceiverController extends ChangeNotifier {
       },
     );
 
-    // If stt.start() returned without starting the recorder (e.g. model
-    // load error, permission denied), reset phase to idle so typed text works.
-    if (!stt.isListening) {
+    // If stt.start() finished without starting the recorder (e.g. error),
+    // reset phase to idle so UI recovers.
+    if (!stt.isListening && _phase == TransceiverPhase.recording) {
       _phase = TransceiverPhase.idle;
       notifyListeners();
     }
   }
 
-  /// Stop recording on PTT release; process whatever we have.
+  /// Stop recording on PTT release or second tap; process speech.
   Future<void> stopPtt() async {
     if (_phase != TransceiverPhase.recording) return;
 
     _phase = TransceiverPhase.processing;
     notifyListeners();
 
-    // If the STT engine wasn't actually listening (e.g. models were
-    // still downloading when PTT was released), skip processing.
+    // If recorder was still activating (mic stream setup taking 100-300ms),
+    // wait up to 1.5s for recorder to activate so speech is not lost!
+    for (var i = 0; i < 15 && !stt.isListening; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
     if (!stt.isListening) {
       _phase = TransceiverPhase.idle;
       _interimText = '';

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -32,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final _textController = TextEditingController();
   final _textFocusNode = FocusNode();
 
+  Timer? _meshTimer;
+
   @override
   void initState() {
     super.initState();
@@ -44,10 +47,21 @@ class _HomeScreenState extends State<HomeScreen> {
       final ctrl = Provider.of<TransceiverController>(context, listen: false);
       ctrl.predownloadModels(ctrl.senderLang);
     });
+
+    // Auto-mesh background watcher: ensures BLE mesh stays active
+    // whenever Bluetooth is turned on or permissions are granted.
+    _meshTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || !_transceiverOn) return;
+      final ctrl = Provider.of<TransceiverController>(context, listen: false);
+      if (!ctrl.meshActive) {
+        ctrl.enableMesh();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _meshTimer?.cancel();
     _textController.dispose();
     _textFocusNode.dispose();
     super.dispose();
@@ -58,18 +72,29 @@ class _HomeScreenState extends State<HomeScreen> {
     _permissionsChecked = true;
 
     final result = await PermissionManager.requestAll();
-    if (!result.allGranted && mounted) {
-      final denied = result.denied.join(', ');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Permissions needed: $denied'),
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(
-            label: 'Retry',
-            onPressed: () => _requestPermissions(),
+    if (mounted) {
+      final ctrl = Provider.of<TransceiverController>(context, listen: false);
+      // Immediately activate BLE mesh once Bluetooth/location permissions are granted
+      if (result.bluetoothGranted || result.allGranted) {
+        ctrl.enableMesh();
+      }
+
+      if (!result.allGranted) {
+        final denied = result.denied.join(', ');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Permissions needed: $denied'),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () {
+                _permissionsChecked = false;
+                _requestPermissions();
+              },
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 
@@ -236,7 +261,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'Release to send',
+                            'Release or tap to send',
                             style: TextStyle(
                               fontSize: 10,
                               color: iTantraTheme.saffron.withValues(alpha: 0.7),
@@ -251,9 +276,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     flex: 2,
                     child: Center(
                       child: PttButton(
-                        isActive: _transceiverOn &&
-                            ctrl.phase == TransceiverPhase.idle &&
-                            !ctrl.modelsDownloading,
+                        isActive: _transceiverOn && !ctrl.modelsDownloading,
+                        isRecording: ctrl.isRecording,
+                        isProcessing: ctrl.isProcessing,
                         onPressed: () => ctrl.startPtt(),
                         onReleased: () => ctrl.stopPtt(),
                       ),

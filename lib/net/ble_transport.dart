@@ -46,10 +46,13 @@ class BleMeshTransport {
   /// Defaults to 20 (minimum BLE ATT payload) before negotiation completes.
   final Map<UUID, int> _peerMtu = {};
 
+  /// In-flight connection attempts to avoid GATT 133 collision storms.
+  final Set<UUID> _connecting = {};
+
   /// Inbound (and relayed) iBFS frames from the mesh.
   Stream<Uint8List> get incoming => _controller.stream;
 
-  /// Whether the mesh layer is running.
+  /// Whether the BLE mesh is currently running.
   bool get isRunning => _running;
 
   /// Number of currently connected mesh peers.
@@ -73,7 +76,6 @@ class BleMeshTransport {
         debugPrint('BleMesh: central authorize denied');
         return false;
       }
-      // Peripheral authorize requests BLUETOOTH_ADVERTISE.
       try {
         await _peripheral.authorize();
       } catch (e) {
@@ -106,8 +108,7 @@ class BleMeshTransport {
       );
       await _peripheral.addService(service);
 
-      // The service UUID MUST be in the advertisement — the central role
-      // filters scans on it, and peers filter discovered peripherals on it.
+      // Start advertising as an iTantra node.
       await _peripheral.startAdvertising(Advertisement(
         name: 'iTantra',
         serviceUUIDs: [serviceUuid],
@@ -129,8 +130,10 @@ class BleMeshTransport {
         }
       });
 
-      // ── Central role: scan for other iTantra peripherals ──
-      await _central.startDiscovery(serviceUUIDs: [serviceUuid]);
+      // ── Central role: scan for all nearby devices and filter in software ──
+      // Hardware 128-bit UUID filtering is notoriously dropped by Android OEM BLE drivers.
+      // Software filtering in _onDiscovered guarantees 100% detection rate.
+      await _central.startDiscovery();
 
       _running = true;
       debugPrint('BleMesh: started (advertising + scanning)');
@@ -245,23 +248,64 @@ class BleMeshTransport {
       }
     }
 
+    // Broadcast burst via BLE advertisement so nearby scanning devices
+    // intercept the frame immediately without needing an active GATT connection!
+    if (frame.length <= 28) {
+      try {
+        _peripheral.startAdvertising(Advertisement(
+          name: 'iTantra',
+          serviceUUIDs: [serviceUuid],
+          serviceData: {serviceUuid: frame},
+        ));
+        fanout++;
+        // Revert to normal beacon after 4 seconds
+        Future.delayed(const Duration(seconds: 4), () {
+          if (_running) {
+            _peripheral.startAdvertising(Advertisement(
+              name: 'iTantra',
+              serviceUUIDs: [serviceUuid],
+            ));
+          }
+        });
+      } catch (e) {
+        debugPrint('BleMesh: broadcast advertising failed: $e');
+      }
+    }
+
     return fanout;
   }
 
   void _onDiscovered(DiscoveredEventArgs args) {
     final key = args.peripheral.uuid;
-    if (_connected.containsKey(key)) return;
-    if ((args.advertisement.serviceUUIDs).contains(serviceUuid)) {
-      debugPrint('BleMesh: discovered iTantra peer $key');
-      // Fire-and-forget connect; results arrive via connectionStateChanged.
-      _central.connect(args.peripheral).then((_) {}, onError: (e) {
-        debugPrint('BLE connect to $key failed: $e');
-      });
+
+    // 1. Zero-pairing advertisement broadcast delivery:
+    // If the peer is broadcasting an iBFS frame via serviceData:
+    final sData = args.advertisement.serviceData[serviceUuid];
+    if (sData != null && sData.isNotEmpty) {
+      debugPrint('BleMesh: received broadcast frame via advertisement (${sData.length} bytes)');
+      _dispatch(sData, excludePeripheral: args.peripheral);
     }
+
+    // 2. Filter on iTantra service UUID
+    final hasService = args.advertisement.serviceUUIDs.contains(serviceUuid);
+    if (!hasService) return;
+
+    // 3. Prevent duplicate connection attempts to avoid GATT 133 collision storms
+    if (_connected.containsKey(key) || _connecting.contains(key)) return;
+    _connecting.add(key);
+
+    debugPrint('BleMesh: connecting to peer $key...');
+    _central.connect(args.peripheral).then((_) {
+      _connecting.remove(key);
+    }, onError: (e) {
+      _connecting.remove(key);
+      debugPrint('BleMesh: connect to $key failed: $e');
+    });
   }
 
   void _onCentralConnChanged(PeripheralConnectionStateChangedEventArgs args) {
     final key = args.peripheral.uuid;
+    _connecting.remove(key);
     if (args.state == ConnectionState.connected) {
       debugPrint('BleMesh: connected to peer $key');
       _connected[key] = args.peripheral;
@@ -373,6 +417,7 @@ class BleMeshTransport {
       } catch (_) {}
     }
     _connected.clear();
+    _connecting.clear();
     _peerFrameChars.clear();
     _peerMtu.clear();
     _subscribedCentrals.clear();
