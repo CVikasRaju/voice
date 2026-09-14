@@ -40,9 +40,6 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/configs/stt_config.json
-    - assets/configs/tts_config.json
-    - assets/configs/vad_config.json
     - assets/models/vad/silero_vad.onnx
     - assets/models/stt/hi/model.int8.onnx
     - assets/models/stt/hi/tokens.txt
