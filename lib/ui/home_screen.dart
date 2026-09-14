@@ -113,28 +113,61 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
+                  // BLE Mesh peer count indicator
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: ctrl.meshActive && ctrl.meshPeerCount > 0
+                              ? iTantraTheme.success.withValues(alpha: 0.15)
+                              : iTantraTheme.surface,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: ctrl.meshActive && ctrl.meshPeerCount > 0
+                                ? iTantraTheme.success.withValues(alpha: 0.5)
+                                : iTantraTheme.border,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              ctrl.meshActive && ctrl.meshPeerCount > 0
+                                  ? Icons.hub
+                                  : Icons.hub_outlined,
+                              size: 13,
+                              color: ctrl.meshActive && ctrl.meshPeerCount > 0
+                                  ? iTantraTheme.success
+                                  : iTantraTheme.textMuted,
+                            ),
+                            const SizedBox(width: 3),
+                            Text(
+                              ctrl.meshActive
+                                  ? '${ctrl.meshPeerCount} peer${ctrl.meshPeerCount == 1 ? '' : 's'}'
+                                  : 'offline',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: ctrl.meshActive && ctrl.meshPeerCount > 0
+                                    ? iTantraTheme.success
+                                    : iTantraTheme.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                   // Transceiver toggle
                   Switch(
                     value: _transceiverOn,
                     onChanged: (v) {
                       setState(() => _transceiverOn = v);
-                      // When toggling on, check if models are ready and
-                      // try to bring up the BLE mesh.
                       if (v && !ctrl.modelsDownloading) {
                         ctrl.predownloadModels(ctrl.senderLang);
-                      }
-                      if (v) {
-                        ctrl.enableMesh().then((ok) {
-                          if (mounted && !ok) {
-                            ScaffoldMessenger.of(this.context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                    'Mesh needs Bluetooth on + nearby-devices permission — running in loopback mode'),
-                                duration: Duration(seconds: 3),
-                              ),
-                            );
-                          }
-                        });
                       }
                     },
                     activeThumbColor: iTantraTheme.saffron,
@@ -297,9 +330,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           child: TextField(
                             controller: _textController,
                             focusNode: _textFocusNode,
+                            // Typed messages don't need the STT model —
+                            // always enabled when the transceiver is on and
+                            // the state machine is idle.
                             enabled: _transceiverOn &&
-                                ctrl.phase == TransceiverPhase.idle &&
-                                !ctrl.modelsDownloading,
+                                ctrl.phase == TransceiverPhase.idle,
                             decoration: InputDecoration(
                               hintText: 'Type a message…',
                               hintStyle: const TextStyle(
@@ -330,7 +365,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                     size: 18, color: iTantraTheme.saffron),
                                 onPressed: _transceiverOn &&
                                         ctrl.phase == TransceiverPhase.idle &&
-                                        !ctrl.modelsDownloading &&
                                         _textController.text.trim().isNotEmpty
                                     ? () {
                                         final text = _textController.text.trim();

@@ -42,6 +42,10 @@ class BleMeshTransport {
   StreamSubscription? _subWrite;
   StreamSubscription? _subNotifyState;
 
+  /// Per-peer negotiated MTU (keyed by peripheral UUID).
+  /// Defaults to 20 (minimum BLE ATT payload) before negotiation completes.
+  final Map<UUID, int> _peerMtu = {};
+
   /// Inbound (and relayed) iBFS frames from the mesh.
   Stream<Uint8List> get incoming => _controller.stream;
 
@@ -172,6 +176,9 @@ class BleMeshTransport {
   ///
   /// [excludePeripheral] / [excludeCentral] are used by the relay path so a
   /// frame is never echoed back to the peer it came from.
+  ///
+  /// Large frames are automatically chunked to respect each peer's negotiated
+  /// ATT MTU (default 20 bytes if negotiation has not yet completed).
   Future<int> send(
     Uint8List frame, {
     Peripheral? excludePeripheral,
@@ -187,13 +194,29 @@ class BleMeshTransport {
       }
       final char = _peerFrameChars[entry.key];
       if (char == null) continue;
+      // ATT payload = MTU − 3 bytes header. Use 20 as safe default.
+      final mtu = _peerMtu[entry.key] ?? 23;
+      final attPayload = mtu - 3;
       try {
-        await _central.writeCharacteristic(
-          entry.value,
-          char,
-          value: frame,
-          type: GATTCharacteristicWriteType.withoutResponse,
-        );
+        if (frame.length <= attPayload) {
+          await _central.writeCharacteristic(
+            entry.value,
+            char,
+            value: frame,
+            type: GATTCharacteristicWriteType.withoutResponse,
+          );
+        } else {
+          // Chunk the frame into ATT-payload-sized pieces.
+          for (var offset = 0; offset < frame.length; offset += attPayload) {
+            final end = (offset + attPayload).clamp(0, frame.length);
+            await _central.writeCharacteristic(
+              entry.value,
+              char,
+              value: Uint8List.sublistView(frame, offset, end),
+              type: GATTCharacteristicWriteType.withoutResponse,
+            );
+          }
+        }
         fanout++;
       } catch (e) {
         debugPrint('BLE write to ${entry.key} failed: $e');
@@ -201,6 +224,8 @@ class BleMeshTransport {
     }
 
     // Notify subscribed centrals (peripheral role).
+    // BLE notify payloads respect the ATT MTU automatically in the OS stack,
+    // so no manual chunking needed here.
     final char = _frameChar;
     if (char != null) {
       for (final central in List.of(_subscribedCentrals)) {
@@ -245,12 +270,24 @@ class BleMeshTransport {
       debugPrint('BleMesh: peer $key disconnected (${args.state})');
       _connected.remove(key);
       _peerFrameChars.remove(key);
+      _peerMtu.remove(key);
     }
   }
 
   Future<void> _subscribeAndRequestMtu(Peripheral peripheral) async {
     try {
-      await _central.requestMTU(peripheral, mtu: 517);
+      // Request the maximum ATT MTU. On Android the stack usually grants 517;
+      // on older / cheap devices it may cap at 23 (20-byte payload). We record
+      // whatever was negotiated so send() can chunk accordingly.
+      int negotiatedMtu = 23; // safe BLE default
+      try {
+        negotiatedMtu = await _central.requestMTU(peripheral, mtu: 517);
+      } catch (e) {
+        debugPrint('BleMesh: MTU negotiation failed for ${peripheral.uuid}: $e — using $negotiatedMtu bytes');
+      }
+      _peerMtu[peripheral.uuid] = negotiatedMtu;
+      debugPrint('BleMesh: MTU for ${peripheral.uuid} = $negotiatedMtu');
+
       final services = await _central.discoverGATT(peripheral);
       for (final service in services) {
         if (service.uuid != serviceUuid) continue;
@@ -337,6 +374,7 @@ class BleMeshTransport {
     }
     _connected.clear();
     _peerFrameChars.clear();
+    _peerMtu.clear();
     _subscribedCentrals.clear();
     try {
       await _peripheral.stopAdvertising();

@@ -40,10 +40,8 @@ class PermissionManager {
 
   static Future<bool> _requestMicrophone() async {
     try {
-      // speech_to_text handles its own permission request on initialize().
-      // We just need to ensure the permission dialog can appear.
-      // On Android, RECORD_AUDIO is requested when STT starts.
-      return true;
+      final status = await Permission.microphone.request();
+      return status.isGranted;
     } catch (_) {
       return false;
     }

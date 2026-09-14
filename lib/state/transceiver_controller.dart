@@ -114,17 +114,37 @@ class TransceiverController extends ChangeNotifier {
   }) : translator = translator ?? TranslationEngine() {
     storeForward = StoreForwardQueue(transport);
     _listenInbound();
+    _loadPrefs();
+    // Auto-start the BLE mesh on creation so it connects without user action.
+    _startMeshOnInit();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    _gpsEnabled = prefs.getBool('gpsEnabled') ?? true;
+    notifyListeners();
+  }
+
+  /// Auto-start BLE mesh in the background.
+  Future<void> _startMeshOnInit() async {
+    final t = transport;
+    if (t is! SwitchableTransport) return;
+    final ok = await t.enableMesh();
+    _meshActive = ok;
+    notifyListeners();
   }
 
   // ── State ──────────────────────────────────────────────────────
   TransceiverPhase _phase = TransceiverPhase.idle;
   TransceiverPhase get phase => _phase;
 
-  bool _gpsEnabled = false;
+  bool _gpsEnabled = true; // Default on — users expect GPS to work out of the box.
   bool get gpsEnabled => _gpsEnabled;
   set gpsEnabled(bool v) {
     _gpsEnabled = v;
     notifyListeners();
+    // Persist preference.
+    SharedPreferences.getInstance().then((p) => p.setBool('gpsEnabled', v));
   }
 
   Lang _senderLang = kHindi;
@@ -332,18 +352,13 @@ class TransceiverController extends ChangeNotifier {
   int? _sttStartMs;
 
   /// Begin recording on PTT press.
+  ///
+  /// Always transitions to the recording phase immediately. stt.start() handles
+  /// model initialisation internally and streams progress via onResult callbacks,
+  /// so the user sees "Downloading…" live in the transcription preview rather than
+  /// a blocked UI.
   Future<void> startPtt() async {
     if (_phase != TransceiverPhase.idle) return;
-
-    // If models are not ready yet, trigger download without blocking PTT.
-    // The download will update interimText with progress messages.
-    // The phase stays idle so typed messages still work during download.
-    if (!stt.isReady) {
-      if (!_modelsDownloading) {
-        await downloadSenderModels();
-      }
-      return;
-    }
 
     _phase = TransceiverPhase.recording;
     _interimText = '';
@@ -353,9 +368,9 @@ class TransceiverController extends ChangeNotifier {
     await stt.start(
       localeId: _senderLang.code,
       onResult: (text, isFinal) {
-        // isFinal=true messages arrive from _processTranscript below when
-        // a VAD segment closes mid-hold; status strings (download progress,
-        // permission errors) come with isFinal=false and are preview-only.
+        // isFinal=true messages arrive when a VAD segment closes mid-hold.
+        // Status strings (download progress, permission errors) come with
+        // isFinal=false and are preview-only.
         _interimText = text;
         notifyListeners();
         if (isFinal && text.trim().isNotEmpty) {
