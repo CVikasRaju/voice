@@ -4,15 +4,16 @@ import '../../core/theme.dart';
 
 /// Hold-to-talk PTT button.
 ///
-/// Visual states mirror the transceiver phase:
-/// - IDLE:    dark circle, saffron ring — press to talk
-/// - RECORDING: pulsing saffron fill — release to send
-/// - PROCESSING/TRANSMITTING: spinning indicator
+/// Uses [Listener] (raw pointer events) instead of [GestureDetector] to
+/// avoid a critical Flutter gesture-arena bug: when `isActive` flips to
+/// false the moment recording starts, GestureDetector disposes the
+/// TapGestureRecognizer that was tracking the finger and replaces it
+/// with a fresh one that has no active gesture — so the release event
+/// is silently lost and the button is permanently bricked.
 ///
-/// IMPORTANT: the press/release handlers are captured when the gesture
-/// *starts*. `isActive` flips to false the moment recording begins (the
-/// controller leaves the idle phase), so gating `onTapUp` on `isActive`
-/// would swallow the release event and brick the button mid-hold.
+/// Listener delivers onPointerDown/Up/Cancel directly through the
+/// rendering pipeline, which tracks the pointer independently of
+/// widget rebuilds.
 class PttButton extends StatefulWidget {
   final VoidCallback onPressed;
   final VoidCallback onReleased;
@@ -54,22 +55,28 @@ class _PttButtonState extends State<PttButton>
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = constraints.maxWidth.clamp(120.0, 200.0);
-        return GestureDetector(
-          onTapDown: (_) {
-            if (!widget.isActive) return;
-            setState(() => _holding = true);
+        return Listener(
+          onPointerDown: (_) {
+            // Only start a NEW press when idle and active.
+            if (_holding || !widget.isActive) return;
+            _holding = true;
+            setState(() {});
             widget.onPressed();
           },
-          // Release fires whenever a hold is in progress, even though
-          // `isActive` is false while recording.
-          onTapUp: (_) {
+          // Release fires whenever a hold is in progress.
+          // Listener events are delivered through the rendering pipeline,
+          // so even if the widget rebuilds (isActive flips false), the
+          // RenderPointerListener continues tracking this pointer.
+          onPointerUp: (_) {
             if (!_holding) return;
-            setState(() => _holding = false);
+            _holding = false;
+            setState(() {});
             widget.onReleased();
           },
-          onTapCancel: () {
+          onPointerCancel: (_) {
             if (!_holding) return;
-            setState(() => _holding = false);
+            _holding = false;
+            setState(() {});
             widget.onReleased();
           },
           child: AnimatedBuilder(

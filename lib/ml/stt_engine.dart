@@ -40,6 +40,11 @@ class SttEngine {
   /// whatever the VAD still holds so nothing is dropped.
   String _utterance = '';
 
+  /// Generation counter — incremented each start(). If stop() runs before
+  /// the async start() completes, the stale start() detects the mismatch
+  /// and aborts, preventing a leaked recorder that nobody will stop.
+  int _generation = 0;
+
   // ── Model download state ──────────────────────────────────────
   bool _downloading = false;
   double _downloadProgress = 0.0;
@@ -261,6 +266,8 @@ class SttEngine {
     required String localeId,
     required SttResultCallback onResult,
   }) async {
+    final gen = ++_generation;
+
     final lang = kLanguages.firstWhere(
       (l) => l.code == localeId,
       orElse: () => kEnglish,
@@ -282,12 +289,17 @@ class SttEngine {
         );
       });
 
+      // Check if stop() was called while we were downloading.
+      if (_generation != gen) return;
+
       if (!ready) {
         onResult('Model download failed — check internet connection', false);
         return;
       }
 
       final initErr = await init(lang);
+      if (_generation != gen) return;
+
       if (!_initialized || _recognizer == null) {
         onResult('Model load error: ${initErr ?? "unknown"}', false);
         return;
@@ -303,6 +315,13 @@ class SttEngine {
       debugPrint('[SttEngine] hasPermission threw: $e');
       hasPerm = false;
     }
+
+    if (_generation != gen) {
+      // stop() was called while we were waiting for permission.
+      _recorder = null;
+      return;
+    }
+
     if (!hasPerm) {
       onResult('Microphone permission denied', false);
       _recorder = null;
@@ -327,6 +346,16 @@ class SttEngine {
       return;
     }
 
+    if (_generation != gen) {
+      // stop() was called while we were starting the stream.
+      try {
+        await _recorder?.stop();
+        await _recorder?.dispose();
+      } catch (_) {}
+      _recorder = null;
+      return;
+    }
+
     _audioSubscription = stream.listen(
       (audioData) => _processAudio(audioData, onResult),
       onError: (Object e) {
@@ -344,10 +373,11 @@ class SttEngine {
     try {
       if (vad != null) {
         vad.acceptWaveform(float32Data);
-        // Drain every complete speech segment. A segment only becomes
-        // available after `minSilenceDuration` of trailing silence, so
-        // while the user is still talking this loop simply does nothing.
-        while (!vad.isEmpty() && vad.isDetected()) {
+        // Drain every complete speech segment. The canonical drain loop
+        // uses isEmpty() only — isDetected() means "speech is ongoing"
+        // (not "segment is ready") and using it as an AND condition
+        // causes segments to be missed at speech boundaries.
+        while (!vad.isEmpty()) {
           final segment = vad.front();
           if (segment.samples.isNotEmpty) {
             final text = _recognize(segment.samples);
@@ -361,17 +391,25 @@ class SttEngine {
           vad.pop();
         }
       } else {
-        // No VAD — recognize fixed 2s windows directly.
-        final text = _recognize(float32Data);
-        if (text.isNotEmpty) {
-          _utterance = _utterance.isEmpty ? text : '$_utterance $text';
-          onResult(_utterance, false);
+        // No VAD — accumulate audio and decode periodically.
+        _noVadBuffer.addAll(float32Data);
+        // Decode roughly every 2 seconds for live preview.
+        if (_noVadBuffer.length >= 32000) {
+          final text = _recognize(Float32List.fromList(_noVadBuffer));
+          if (text.isNotEmpty) {
+            _utterance = _utterance.isEmpty ? text : '$_utterance $text';
+            onResult(_utterance, false);
+          }
+          _noVadBuffer.clear();
         }
       }
     } catch (e) {
       debugPrint('[SttEngine] _processAudio error: $e');
     }
   }
+
+  // Buffer for the no-VAD fallback path (decoded every ~2s).
+  final List<double> _noVadBuffer = [];
 
   /// Run the offline recognizer on [samples]; returns text ('' when silent).
   String _recognize(Float32List samples) {
@@ -400,16 +438,34 @@ class SttEngine {
   String flushTail() {
     final vad = _vad;
     try {
-      if (vad != null && !vad.isEmpty() && vad.isDetected()) {
-        final segment = vad.front();
-        if (segment.samples.isNotEmpty) {
-          final text = _recognize(segment.samples);
-          if (text.isNotEmpty) {
-            _utterance = _utterance.isEmpty ? text : '$_utterance $text';
+      if (vad != null) {
+        // Force the VAD to emit whatever speech it is currently buffering
+        // as a completed segment. Without flush(), ongoing speech that
+        // hasn't reached minSilenceDuration stays in the internal buffer
+        // and is lost.
+        vad.flush();
+        while (!vad.isEmpty()) {
+          final segment = vad.front();
+          if (segment.samples.isNotEmpty) {
+            final text = _recognize(segment.samples);
+            if (text.isNotEmpty) {
+              _utterance = _utterance.isEmpty ? text : '$_utterance $text';
+            }
           }
+          vad.pop();
         }
-        vad.pop();
       }
+
+      // Also flush the no-VAD accumulator.
+      if (_noVadBuffer.isNotEmpty) {
+        final text =
+            _recognize(Float32List.fromList(_noVadBuffer));
+        if (text.isNotEmpty) {
+          _utterance = _utterance.isEmpty ? text : '$_utterance $text';
+        }
+        _noVadBuffer.clear();
+      }
+
       // Reset the VAD buffer so the next hold starts clean; leftover
       // trailing silence must not merge into the next utterance.
       vad?.clear();
@@ -441,10 +497,14 @@ class SttEngine {
   /// Stop listening and return the final transcript for this hold.
   /// Returns '' when the hold produced no recognizable speech.
   Future<String> stop() async {
+    // Invalidate any in-flight start() call so its async gaps abort.
+    _generation++;
+
     await _audioSubscription?.cancel();
     _audioSubscription = null;
     try {
       await _recorder?.stop();
+      await _recorder?.dispose();
     } catch (_) {}
     _recorder = null;
 
@@ -453,7 +513,7 @@ class SttEngine {
   }
 
   /// Whether the engine is currently listening.
-  bool get isListening => _recorder != null;
+  bool get isListening => _audioSubscription != null && _recorder != null;
 
   /// Whether the offline STT models are loaded and ready.
   bool get isReady => _initialized && _recognizer != null;
@@ -466,10 +526,12 @@ class SttEngine {
 
   /// Dispose resources.
   Future<void> dispose() async {
+    _generation++;
     await _audioSubscription?.cancel();
     _audioSubscription = null;
     try {
       await _recorder?.stop();
+      await _recorder?.dispose();
     } catch (_) {}
     _recorder = null;
     try {
