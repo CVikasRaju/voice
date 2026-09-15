@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle, MethodChannel;
@@ -401,6 +400,10 @@ class SttEngine {
 
     if (!_initialized || _currentLocale != localeId) {
       init(lang).then((_) {
+        // The user may have already released the button while the model
+        // was loading; stop() owns the buffer in that case. Only decode
+        // for the hold that triggered this init.
+        if (_generation != gen) return;
         if (_initialized && _recognizer != null && _sessionAudioBuffer.isNotEmpty) {
           final text = _recognize(Float32List.fromList(_sessionAudioBuffer));
           if (text.isNotEmpty && _utterance.isEmpty) {
@@ -415,7 +418,18 @@ class SttEngine {
   /// Process a chunk of PCM audio through the VAD + recognizer.
   void _processAudio(Uint8List pcmData, SttResultCallback onResult) {
     if (pcmData.isEmpty) return;
-    final float32Data = _pcm16ToFloat32(pcmData);
+    Float32List float32Data;
+    try {
+      float32Data = _pcm16ToFloat32(pcmData);
+    } catch (e) {
+      // A malformed PCM chunk must NEVER kill the mic stream: an exception
+      // thrown here escapes the stream listener and can tear down the
+      // audio subscription, after which every subsequent hold reports
+      // "No speech detected". Drop the bad chunk and keep listening.
+      debugPrint('[SttEngine] PCM conversion failed, chunk dropped: $e');
+      return;
+    }
+    if (float32Data.isEmpty) return;
     _sessionAudioBuffer.addAll(float32Data);
     final vad = _vad;
 
@@ -523,16 +537,26 @@ class SttEngine {
         }
       }
 
-      // Fallback 2: If STT model returned empty, check if user actually spoke (RMS energy > threshold).
-      // This ensures emergency transmissions are never dropped in a disaster scenario!
+      // Fallback 2: STT returned nothing. Check whether the user actually
+      // spoke before giving up. Phone mics with aggressive AGC often
+      // capture speech at very low levels — a strict RMS threshold
+      // silently discards REAL speech and surfaces as "No speech detected"
+      // while the user IS talking. Declare speech when EITHER the RMS or
+      // the peak amplitude clears a relaxed floor.
       if (_utterance.trim().isEmpty && _sessionAudioBuffer.length >= 4800) {
         double sumSquares = 0.0;
+        var peak = 0.0;
         for (final s in _sessionAudioBuffer) {
           sumSquares += s * s;
+          final a = s.abs();
+          if (a > peak) peak = a;
         }
         final rms = math.sqrt(sumSquares / _sessionAudioBuffer.length);
-        if (rms > 0.012) {
-          _utterance = '🎙️ [Voice Audio]';
+        if (rms > 0.004 || peak > 0.10) {
+          debugPrint('[SttEngine] STT empty but audio present '
+              '(rms=${rms.toStringAsFixed(4)}, peak=${peak.toStringAsFixed(3)}) '
+              '— marking as voice note');
+          _utterance = '🎙️ [Voice note]';
         }
       }
 
@@ -546,18 +570,19 @@ class SttEngine {
   }
 
   /// Convert int16 PCM bytes to float32 array.
+  ///
+  /// Uses [ByteData.sublistView] with explicit little-endian reads instead
+  /// of `Int16List.view`: the recorder can deliver a chunk whose buffer
+  /// offset is not 2-byte aligned, and `Int16List.view` throws RangeError
+  /// on misaligned views. ByteData reads have no alignment requirement.
+  /// An odd trailing byte is dropped (half a sample) rather than padded.
   Float32List _pcm16ToFloat32(Uint8List pcmBytes) {
-    if (pcmBytes.length % 2 != 0) {
-      pcmBytes = Uint8List.fromList([...pcmBytes, 0]);
-    }
-    final int16View = Int16List.view(
-      pcmBytes.buffer,
-      pcmBytes.offsetInBytes,
-      pcmBytes.lengthInBytes ~/ 2,
-    );
-    final float32List = Float32List(int16View.length);
-    for (var i = 0; i < int16View.length; i++) {
-      float32List[i] = int16View[i] / 32768.0;
+    if (pcmBytes.length < 2) return Float32List(0);
+    final sampleCount = pcmBytes.length ~/ 2;
+    final data = ByteData.sublistView(pcmBytes);
+    final float32List = Float32List(sampleCount);
+    for (var i = 0; i < sampleCount; i++) {
+      float32List[i] = data.getInt16(i * 2, Endian.little) / 32768.0;
     }
     return float32List;
   }

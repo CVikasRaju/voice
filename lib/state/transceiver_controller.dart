@@ -376,6 +376,19 @@ class TransceiverController extends ChangeNotifier {
     _sttStartMs = DateTime.now().millisecondsSinceEpoch;
     notifyListeners();
 
+    // If the offline STT model isn't loaded yet, kick off a download in
+    // the background. The hold still captures audio (VAD + fallbacks),
+    // so the user is never blocked — but without this, first-time users
+    // only ever see "No speech detected" until they find the download
+    // button manually.
+    if (!stt.isReady || stt.currentLocale != _senderLang.code) {
+      downloadSenderModels();
+      _statusMessage =
+          'Preparing ${_senderLang.name} speech model — voice captured, '
+          'transcription improves when the model finishes downloading';
+      notifyListeners();
+    }
+
     await stt.start(
       localeId: _senderLang.code,
       onResult: (text, isFinal) {
@@ -427,7 +440,13 @@ class TransceiverController extends ChangeNotifier {
     } else {
       _phase = TransceiverPhase.idle;
       _interimText = '';
-      _statusMessage = 'No speech detected — speak clearly into mic';
+      // Distinguish "mic never started" from "mic ran but heard nothing".
+      // Blanket "speak clearly" advice is wrong when the real cause is a
+      // model still downloading or a voice too quiet for the STT model.
+      _statusMessage = stt.isReady
+          ? 'No transcription — speak louder and closer to the mic'
+          : 'Speech model still downloading — tap PTT again in a moment '
+              'or type your message below';
       notifyListeners();
     }
   }
