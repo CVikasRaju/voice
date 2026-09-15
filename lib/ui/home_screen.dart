@@ -271,6 +271,39 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
 
+                  // ── Feedback / Notification Banner ────────────
+                  if (ctrl.statusMessage != null && ctrl.phase == TransceiverPhase.idle)
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: iTantraTheme.surface,
+                        border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.info_outline, size: 16, color: Colors.amber),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              ctrl.statusMessage!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: iTantraTheme.textPrimary,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 14, color: iTantraTheme.textMuted),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            onPressed: () => ctrl.clearStatusMessage(),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   // ── PTT Button ────────────────────────────────
                   Expanded(
                     flex: 2,

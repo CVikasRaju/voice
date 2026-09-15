@@ -3,7 +3,7 @@ description: >-
   iTantra (ई-तंत्र) — Indian multilingual offline TTS/STT transceiver for
   low-bitrate ad-hoc links.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+1
 
 environment:
   sdk: ^3.11.4
@@ -27,7 +27,6 @@ dependencies:
   record: ^7.1.1
   path_provider: ^2.1.2
   bluetooth_low_energy: ^6.2.1
-  google_mlkit_translation: ^0.15.1
   audioplayers: ^6.8.1
   permission_handler: ^13.0.2
 
@@ -41,5 +40,3 @@ flutter:
 
   assets:
     - assets/models/vad/silero_vad.onnx
-    - assets/models/stt/hi/model.int8.onnx
-    - assets/models/stt/hi/tokens.txt

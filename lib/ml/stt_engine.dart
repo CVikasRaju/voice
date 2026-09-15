@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
@@ -97,8 +98,24 @@ class SttEngine {
     return success;
   }
 
-  /// Copy bundled asset models (e.g. Hindi) into app documents directory if present.
+  Completer<void>? _bundleExtractCompleter;
+
+  /// Per-language dedup: skip extraction if we already tried this language.
+  final Set<String> _extractedLangs = {};
+
+  /// Try to copy bundled asset models into app documents directory.
+  /// If no bundled asset exists (model removed from APK to reduce size),
+  /// this is a no-op — the caller will download models instead.
   Future<void> _ensureBundledModel(Lang lang) async {
+    if (_extractedLangs.contains(lang.code)) return;
+    _extractedLangs.add(lang.code);
+
+    if (_bundleExtractCompleter != null) {
+      return _bundleExtractCompleter!.future;
+    }
+    final completer = Completer<void>();
+    _bundleExtractCompleter = completer;
+
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final modelFile = File('${appDir.path}/${lang.sttModel}');
@@ -118,7 +135,9 @@ class SttEngine {
             extracted =
                 await modelFile.exists() && await modelFile.length() >= 50000000;
           } catch (e) {
-            debugPrint('[SttEngine] Native model extract failed: $e');
+            // Asset not bundled — this is expected when models are not
+            // shipped in the APK to reduce size. Download will handle it.
+            debugPrint('[SttEngine] Bundled model not available for ${lang.name}: $e');
           }
         }
         if (!extracted) {
@@ -127,6 +146,8 @@ class SttEngine {
             await modelFile.parent.create(recursive: true);
             await modelFile.writeAsBytes(byteData.buffer.asUint8List(
                 byteData.offsetInBytes, byteData.lengthInBytes));
+            extracted =
+                await modelFile.exists() && await modelFile.length() >= 50000000;
           } catch (e) {
             debugPrint('[SttEngine] rootBundle model extract failed: $e');
           }
@@ -147,7 +168,7 @@ class SttEngine {
             extracted =
                 await tokensFile.exists() && await tokensFile.length() >= 1000;
           } catch (e) {
-            debugPrint('[SttEngine] Native tokens extract failed: $e');
+            debugPrint('[SttEngine] Bundled tokens not available for ${lang.name}: $e');
           }
         }
         if (!extracted) {
@@ -163,6 +184,9 @@ class SttEngine {
       }
     } catch (e) {
       debugPrint('[SttEngine] _ensureBundledModel error: $e');
+    } finally {
+      completer.complete();
+      _bundleExtractCompleter = null;
     }
   }
 
@@ -293,13 +317,15 @@ class SttEngine {
     }
   }
 
+  /// Buffer for raw float32 samples across the current PTT session.
+  final List<double> _sessionAudioBuffer = [];
+
   /// Start listening and transcribing.
   ///
-  /// Records 16kHz mono PCM from the microphone, detects speech with
-  /// Silero VAD, and runs the offline recognizer on each complete speech
-  /// segment. Live transcripts stream to [onResult] while the button is
-  /// held; [stop] flushes the trailing segment so short utterances are
-  /// never lost.
+  /// Records 16kHz mono PCM from the microphone immediately, detects speech
+  /// with Silero VAD, and runs the offline recognizer. Live transcripts stream
+  /// to [onResult] while the button is held; [stop] flushes the trailing segment
+  /// so short utterances are never lost.
   Future<void> start({
     required String localeId,
     required SttResultCallback onResult,
@@ -311,40 +337,8 @@ class SttEngine {
       orElse: () => kEnglish,
     );
 
-    await initVad();
-
-    if (!_initialized || _currentLocale != localeId) {
-      await init(lang);
-    }
-
-    if (!_initialized || _recognizer == null) {
-      onResult('Downloading offline models…', false);
-
-      final ready = await prepareModels(lang, onProgress: (progress) {
-        onResult(
-          'Downloading models… ${(progress * 100).toInt()}%',
-          false,
-        );
-      });
-
-      // Check if stop() was called while we were downloading.
-      if (_generation != gen) return;
-
-      if (!ready) {
-        onResult('Model download failed — check internet connection', false);
-        return;
-      }
-
-      final initErr = await init(lang);
-      if (_generation != gen) return;
-
-      if (!_initialized || _recognizer == null) {
-        onResult('Model load error: ${initErr ?? "unknown"}', false);
-        return;
-      }
-    }
-
-    // Ensure mic permission, then start recording.
+    // 1. Ensure mic permission and start recording immediately so
+    // we never drop audio while models initialize!
     _recorder = AudioRecorder();
     bool hasPerm;
     try {
@@ -355,7 +349,6 @@ class SttEngine {
     }
 
     if (_generation != gen) {
-      // stop() was called while we were waiting for permission.
       _recorder = null;
       return;
     }
@@ -367,6 +360,7 @@ class SttEngine {
     }
 
     _utterance = '';
+    _sessionAudioBuffer.clear();
 
     Stream<Uint8List> stream;
     try {
@@ -385,7 +379,6 @@ class SttEngine {
     }
 
     if (_generation != gen) {
-      // stop() was called while we were starting the stream.
       try {
         await _recorder?.stop();
         await _recorder?.dispose();
@@ -400,21 +393,35 @@ class SttEngine {
         debugPrint('[SttEngine] audio stream error: $e');
       },
     );
+
+    // 2. Ensure models are initialized in background
+    if (_vad == null) {
+      await initVad();
+    }
+
+    if (!_initialized || _currentLocale != localeId) {
+      init(lang).then((_) {
+        if (_initialized && _recognizer != null && _sessionAudioBuffer.isNotEmpty) {
+          final text = _recognize(Float32List.fromList(_sessionAudioBuffer));
+          if (text.isNotEmpty && _utterance.isEmpty) {
+            _utterance = text;
+            onResult(_utterance, false);
+          }
+        }
+      });
+    }
   }
 
   /// Process a chunk of PCM audio through the VAD + recognizer.
   void _processAudio(Uint8List pcmData, SttResultCallback onResult) {
     if (pcmData.isEmpty) return;
     final float32Data = _pcm16ToFloat32(pcmData);
+    _sessionAudioBuffer.addAll(float32Data);
     final vad = _vad;
 
     try {
       if (vad != null) {
         vad.acceptWaveform(float32Data);
-        // Drain every complete speech segment. The canonical drain loop
-        // uses isEmpty() only — isDetected() means "speech is ongoing"
-        // (not "segment is ready") and using it as an AND condition
-        // causes segments to be missed at speech boundaries.
         while (!vad.isEmpty()) {
           final segment = vad.front();
           if (segment.samples.isNotEmpty) {
@@ -507,6 +514,29 @@ class SttEngine {
       // Reset the VAD buffer so the next hold starts clean; leftover
       // trailing silence must not merge into the next utterance.
       vad?.clear();
+
+      // Fallback 1: If VAD produced nothing, decode the entire session audio buffer directly.
+      if (_utterance.trim().isEmpty && _sessionAudioBuffer.isNotEmpty) {
+        final text = _recognize(Float32List.fromList(_sessionAudioBuffer));
+        if (text.trim().isNotEmpty) {
+          _utterance = text.trim();
+        }
+      }
+
+      // Fallback 2: If STT model returned empty, check if user actually spoke (RMS energy > threshold).
+      // This ensures emergency transmissions are never dropped in a disaster scenario!
+      if (_utterance.trim().isEmpty && _sessionAudioBuffer.length >= 4800) {
+        double sumSquares = 0.0;
+        for (final s in _sessionAudioBuffer) {
+          sumSquares += s * s;
+        }
+        final rms = math.sqrt(sumSquares / _sessionAudioBuffer.length);
+        if (rms > 0.012) {
+          _utterance = '🎙️ [Voice Audio]';
+        }
+      }
+
+      _sessionAudioBuffer.clear();
     } catch (e) {
       debugPrint('[SttEngine] flushTail error: $e');
     }

@@ -56,19 +56,61 @@ class MainActivity : FlutterActivity() {
                         Thread {
                             try {
                                 val destFile = java.io.File(destPath)
+                                val tempFile = java.io.File("$destPath.tmp")
                                 destFile.parentFile?.mkdirs()
+
+                                var copied = false
                                 val flutterAssetPath = if (assetPath.startsWith("flutter_assets/")) assetPath else "flutter_assets/$assetPath"
-                                assets.open(flutterAssetPath).use { input ->
-                                    java.io.FileOutputStream(destFile).use { output ->
-                                        val buffer = ByteArray(65536)
-                                        var bytesRead: Int
-                                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                                            output.write(buffer, 0, bytesRead)
+
+                                // Attempt 1: Try reading via AssetManager
+                                try {
+                                    assets.open(flutterAssetPath).use { input ->
+                                        java.io.FileOutputStream(tempFile).use { output ->
+                                            val buffer = ByteArray(65536)
+                                            var bytesRead: Int
+                                            while (input.read(buffer).also { bytesRead = it } != -1) {
+                                                output.write(buffer, 0, bytesRead)
+                                            }
+                                            output.flush()
                                         }
-                                        output.flush()
+                                    }
+                                    if (tempFile.length() > 0) copied = true
+                                } catch (_: Exception) {
+                                    // AssetManager could not read or exceeded uncompress limit
+                                }
+
+                                // Attempt 2: If AssetManager failed, stream directly from the APK ZipFile
+                                if (!copied) {
+                                    val apkPath = applicationContext.applicationInfo.sourceDir
+                                    java.util.zip.ZipFile(apkPath).use { zip ->
+                                        val entry = zip.getEntry("assets/$flutterAssetPath")
+                                            ?: zip.getEntry(flutterAssetPath)
+                                            ?: zip.entries().asSequence().firstOrNull { it.name.endsWith(assetPath) }
+
+                                        if (entry != null) {
+                                            zip.getInputStream(entry).use { input ->
+                                                java.io.FileOutputStream(tempFile).use { output ->
+                                                    val buffer = ByteArray(65536)
+                                                    var bytesRead: Int
+                                                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                                                        output.write(buffer, 0, bytesRead)
+                                                    }
+                                                    output.flush()
+                                                }
+                                            }
+                                            if (tempFile.length() > 0) copied = true
+                                        }
                                     }
                                 }
-                                runOnUiThread { result.success(true) }
+
+                                if (copied && tempFile.length() > 0) {
+                                    if (destFile.exists()) destFile.delete()
+                                    tempFile.renameTo(destFile)
+                                    runOnUiThread { result.success(true) }
+                                } else {
+                                    tempFile.delete()
+                                    runOnUiThread { result.error("COPY_ERR", "Could not extract asset: $assetPath", null) }
+                                }
                             } catch (e: Exception) {
                                 runOnUiThread { result.error("COPY_ERR", e.message, null) }
                             }

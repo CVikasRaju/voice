@@ -5,19 +5,28 @@ import 'package:itantra/ml/tts_model_downloader.dart';
 
 void main() {
   group('translation language support', () {
-    test('ML Kit supported languages are recognised', () {
-      expect(TranslationEngine.isSupported(kHindi), isTrue);
-      expect(TranslationEngine.isSupported(langByIso639('kn')!), isTrue);
-      expect(TranslationEngine.isSupported(kEnglish), isTrue);
-      expect(TranslationEngine.isSupported(langByIso639('bn')!), isTrue);
+    test('translation is disabled (text-only fallback for APK size reduction)',
+        () {
+      // ML Kit translation was removed to save ~50 MB in APK.
+      // All languages report unsupported — cross-language messages show
+      // the original transcribed text instead.
+      expect(TranslationEngine.isSupported(kHindi), isFalse);
+      expect(TranslationEngine.isSupported(langByIso639('kn')!), isFalse);
+      expect(TranslationEngine.isSupported(kEnglish), isFalse);
     });
 
-    test('Odia and Malayalam are unsupported by ML Kit (text-only fallback)',
-        () {
-      final odia = kLanguages.firstWhere((l) => l.iso639 == 'or');
-      final malayalam = kLanguages.firstWhere((l) => l.iso639 == 'ml');
-      expect(TranslationEngine.isSupported(odia), isFalse);
-      expect(TranslationEngine.isSupported(malayalam), isFalse);
+    test('translate returns null (no ML Kit)', () async {
+      final engine = TranslationEngine();
+      final result = await engine.translate('hello', kEnglish, kHindi);
+      expect(result, isNull);
+      await engine.dispose();
+    });
+
+    test('same-language translate returns text unchanged', () async {
+      final engine = TranslationEngine();
+      final result = await engine.translate('hello', kEnglish, kEnglish);
+      expect(result, 'hello');
+      await engine.dispose();
     });
   });
 
@@ -34,8 +43,6 @@ void main() {
     });
 
     test('MMS code mapping is correct', () {
-      // Verify via the public hasNeuralModel + naming of model paths.
-      // (The map itself is private; these assertions pin the behaviour.)
       final hindi = kLanguages.firstWhere((l) => l.iso639 == 'hi');
       expect(hindi.ttsModel, contains('tts'));
       expect(hindi.ttsTokens, contains('tokens'));

@@ -115,8 +115,13 @@ class TransceiverController extends ChangeNotifier {
     storeForward = StoreForwardQueue(transport);
     _listenInbound();
     _loadPrefs();
-    // Auto-start the BLE mesh on creation so it connects without user action.
-    _startMeshOnInit();
+    // Delay BLE mesh start to allow permissions to be granted first.
+    // The HomeScreen._requestPermissions() runs in initState and triggers
+    // enableMesh() once BT permissions are granted. This timer is a fallback
+    // in case the user grants permissions before the UI is ready.
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!_meshActive) _startMeshOnInit();
+    });
   }
 
   Future<void> _loadPrefs() async {
@@ -165,6 +170,13 @@ class TransceiverController extends ChangeNotifier {
 
   String _interimText = '';
   String get interimText => _interimText;
+
+  String? _statusMessage;
+  String? get statusMessage => _statusMessage;
+  void clearStatusMessage() {
+    _statusMessage = null;
+    notifyListeners();
+  }
 
   int _sequenceId = 0;
 
@@ -358,6 +370,7 @@ class TransceiverController extends ChangeNotifier {
   Future<void> startPtt() async {
     if (_phase != TransceiverPhase.idle) return;
 
+    _statusMessage = null;
     _phase = TransceiverPhase.recording;
     _interimText = '';
     _sttStartMs = DateTime.now().millisecondsSinceEpoch;
@@ -378,6 +391,7 @@ class TransceiverController extends ChangeNotifier {
     // reset phase to idle so UI recovers.
     if (!stt.isListening && _phase == TransceiverPhase.recording) {
       _phase = TransceiverPhase.idle;
+      _statusMessage = 'Microphone not available — check permissions';
       notifyListeners();
     }
   }
@@ -398,6 +412,7 @@ class TransceiverController extends ChangeNotifier {
     if (!stt.isListening) {
       _phase = TransceiverPhase.idle;
       _interimText = '';
+      _statusMessage = 'Microphone was not active — tap and speak';
       notifyListeners();
       return;
     }
@@ -412,6 +427,7 @@ class TransceiverController extends ChangeNotifier {
     } else {
       _phase = TransceiverPhase.idle;
       _interimText = '';
+      _statusMessage = 'No speech detected — speak clearly into mic';
       notifyListeners();
     }
   }
@@ -424,6 +440,10 @@ class TransceiverController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    // Ensure phase is processing (Encode stage active)
+    _phase = TransceiverPhase.processing;
+    notifyListeners();
 
     final e2eStart = DateTime.now().millisecondsSinceEpoch;
     final sttMs = _sttStartMs != null
@@ -469,6 +489,9 @@ class TransceiverController extends ChangeNotifier {
     );
 
     final frame = encodeIbfs(packet);
+
+    // Brief visual pause so the user sees the Encode stage light up
+    await Future<void>.delayed(const Duration(milliseconds: 150));
 
     // ── Transmit ──
     _phase = TransceiverPhase.transmitting;

@@ -1,11 +1,6 @@
-# ──────────────────────────────────────────────────────
-# iTantra — .gitignore
-# ──────────────────────────────────────────────────────
-
 # ── Dependencies ─────────────────────────────────────
 .dart_tool/
 .packages
-pubspec.lock
 .flutter-plugins
 .flutter-plugins-dependencies
 
@@ -27,14 +22,6 @@ android/key.properties
 **/*.keystore
 **/*.jks
 
-# ── iOS (if added later) ────────────────────────────
-ios/Pods/
-ios/.symlinks/
-ios/Flutter/Flutter.framework
-ios/Flutter/Flutter.podspec
-ios/Flutter/Generated.xcconfig
-ios/Flutter/ephemeral/
-
 # ── IDE ──────────────────────────────────────────────
 .idea/
 .vscode/
@@ -50,33 +37,24 @@ ios/Flutter/ephemeral/
 *.pem
 *.key
 
-# ── Python ───────────────────────────────────────────
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-.venv/
-venv/
-
 # ── OS ───────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 desktop.ini
 ehthumbs.db
 
-# ── Node (if ever used for tooling) ─────────────────
-node_modules/
-package-lock.json
-
-# ── ML Model files (large — download via scripts/) ──
-# Models are downloaded on first launch; do NOT commit.
-assets/models/stt/
-assets/models/vad/*.onnx
-assets/models/tts/*.onnx
+# ── Java crash logs ──────────────────────────────────
+android/hs_err_pid*.log
+android/replay_pid*.log
 
 # ── Archives ─────────────────────────────────────────
 *.tar.gz
 *.zip
 *.7z
-# Widget Preview related
+
+# Widget Preview
 .widget_preview/
+
+# Local dev ML models (too large for git — downloaded at runtime)
+assets/models/stt/*/model.int8.onnx
+assets/models/stt/*/tokens.txt
